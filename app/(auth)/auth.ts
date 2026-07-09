@@ -3,6 +3,7 @@ import NextAuth, { type DefaultSession } from "next-auth";
 import type { DefaultJWT } from "next-auth/jwt";
 import Credentials from "next-auth/providers/credentials";
 import Google from "next-auth/providers/google";
+import { authSecret } from "@/lib/auth/secret";
 import { DUMMY_PASSWORD } from "@/lib/constants";
 import { createGuestUser, getUser, createUser } from "@/lib/db/queries";
 import { authConfig } from "./auth.config";
@@ -38,6 +39,7 @@ export const {
   signOut,
 } = NextAuth({
   ...authConfig,
+  secret: authSecret,
   callbacks: {
     async signIn({ user: oauthUser, account }) {
       if (account?.provider === "google") {
