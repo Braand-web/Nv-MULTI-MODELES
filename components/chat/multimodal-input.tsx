@@ -6,6 +6,7 @@ import equal from "fast-deep-equal";
 import {
   ArrowUpIcon,
   BrainIcon,
+  CoinsIcon,
   EyeIcon,
   LockIcon,
   WrenchIcon,
@@ -65,6 +66,12 @@ import {
 } from "./slash-commands";
 import { SuggestedActions } from "./suggested-actions";
 import type { VisibilityType } from "./visibility-selector";
+
+type ModelProfile = {
+  creditCost: number;
+  minPlan: "free" | "pro" | "elite";
+  strengths: string[];
+};
 
 function setCookie(name: string, value: string) {
   const maxAge = 60 * 60 * 24 * 365;
@@ -784,6 +791,7 @@ function ModelSelectorOption({
   curated,
   model,
   onModelChange,
+  profiles,
   selectedModelId,
   setOpen,
 }: {
@@ -791,10 +799,12 @@ function ModelSelectorOption({
   curated: boolean;
   model: ChatModel;
   onModelChange?: (modelId: string) => void;
+  profiles: Record<string, ModelProfile> | undefined;
   selectedModelId: string;
   setOpen: Dispatch<SetStateAction<boolean>>;
 }) {
   const [logoProvider] = model.id.split("/");
+  const profile = profiles?.[model.id];
   const maybeWithTooltip = (icon: ReactNode, label: string) => {
     if (!curated) {
       return icon;
@@ -842,6 +852,15 @@ function ModelSelectorOption({
       <ModelSelectorLogo provider={logoProvider} />
       <ModelSelectorName>{model.name}</ModelSelectorName>
       <div className="ml-auto flex items-center gap-2 text-foreground/70">
+        {profile
+          ? maybeWithTooltip(
+              <span className="inline-flex items-center gap-1 text-[10px] font-medium tabular-nums">
+                <CoinsIcon className="size-3" />
+                {profile.creditCost}
+              </span>,
+              `${profile.creditCost} credit(s) par reponse`
+            )
+          : null}
         {capabilities?.[model.id]?.tools
           ? maybeWithTooltip(
               <WrenchIcon className="size-3.5" />,
@@ -898,6 +917,7 @@ function PureModelSelectorCompact({
   const capabilities: Record<string, ModelCapabilities> | undefined =
     modelsData?.capabilities ?? modelsData;
   const dynamicModels: ChatModel[] | undefined = modelsData?.models;
+  const profiles: Record<string, ModelProfile> | undefined = modelsData?.profiles;
 
   const autoModel: ChatModel = {
     id: "auto",
@@ -1011,6 +1031,7 @@ function PureModelSelectorCompact({
                     key={model.id}
                     model={model}
                     onModelChange={onModelChange}
+                    profiles={profiles}
                     selectedModelId={selectedModel.id}
                     setOpen={setOpen}
                   />

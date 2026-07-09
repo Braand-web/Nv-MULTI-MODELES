@@ -10,21 +10,25 @@ import {
   gte,
   inArray,
   lt,
+  sql,
   type SQL,
 } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 import type { ArtifactKind } from "@/components/chat/artifact";
 import type { VisibilityType } from "@/components/chat/visibility-selector";
+import type { ComplexityTier, TaskKind } from "@/lib/ai/model-router";
 import { ChatbotError } from "../errors";
 import { generateUUID } from "../utils";
 import {
   type Chat,
+  aiUsage,
   chat,
   type DBMessage,
   document,
   message,
   type Suggestion,
+  type NewAIUsage,
   stream,
   suggestion,
   type User,
@@ -609,5 +613,90 @@ export async function updateUserCredits({
     return await db.update(user).set({ credits }).where(eq(user.id, id));
   } catch (error) {
     throw new ChatbotError("bad_request:database", { cause: error });
+  }
+}
+
+export async function deductUserCredits({
+  id,
+  credits,
+}: {
+  id: string;
+  credits: number;
+}) {
+  try {
+    const updatedRows = await db
+      .update(user)
+      .set({ credits: sql`${user.credits} - ${credits}` })
+      .where(and(eq(user.id, id), gte(user.credits, credits)))
+      .returning({ credits: user.credits });
+
+    if (updatedRows.length === 0) {
+      throw new ChatbotError(
+        "bad_request:database",
+        "Insufficient credits for atomic deduction"
+      );
+    }
+
+    return updatedRows;
+  } catch (error) {
+    if (error instanceof ChatbotError) {
+      throw error;
+    }
+    throw new ChatbotError("bad_request:database", { cause: error });
+  }
+}
+
+export async function recordAiUsage(values: NewAIUsage) {
+  try {
+    return await db.insert(aiUsage).values(values).returning();
+  } catch (error) {
+    throw new ChatbotError("bad_request:database", { cause: error });
+  }
+}
+
+type ModelPerformanceHintRow = {
+  downvotes: number;
+  modelId: string;
+  total: number;
+  upvotes: number;
+};
+
+export async function getModelPerformanceHints({
+  complexity,
+  task,
+}: {
+  complexity: ComplexityTier;
+  task: TaskKind;
+}) {
+  try {
+    const rows = (await client`
+      SELECT
+        au."modelId" AS "modelId",
+        COUNT(*)::int AS "total",
+        COALESCE(SUM(CASE WHEN v."isUpvoted" = true THEN 1 ELSE 0 END), 0)::int AS "upvotes",
+        COALESCE(SUM(CASE WHEN v."isUpvoted" = false THEN 1 ELSE 0 END), 0)::int AS "downvotes"
+      FROM "AIUsage" au
+      LEFT JOIN "Vote_v2" v ON v."messageId" = au."messageId"
+      WHERE au."task" = ${task}
+        AND au."complexity" = ${complexity}
+        AND au."createdAt" > now() - interval '30 days'
+      GROUP BY au."modelId"
+    `) as unknown as ModelPerformanceHintRow[];
+
+    return Object.fromEntries(
+      rows.map((row) => {
+        const votes = row.upvotes - row.downvotes;
+        const sampleAdjustedScore =
+          row.total < 10 ? votes / 10 : votes / Math.max(row.total, 1);
+
+        return [
+          row.modelId,
+          Math.max(-3, Math.min(3, sampleAdjustedScore * 4)),
+        ];
+      })
+    );
+  } catch (error) {
+    console.error("Failed to load model performance hints:", error);
+    return {};
   }
 }

@@ -25,22 +25,22 @@ export type ChatModel = {
 
 export const chatModels: ChatModel[] = [
   {
-    description: "FLUX 1.1 Pro Image Generation Model",
-    id: "black-forest-labs/flux-1.1-pro",
-    name: "FLUX 1.1 Pro",
+    description: "Fast FLUX.2 image generation model",
+    id: "black-forest-labs/flux.2-klein-4b",
+    name: "FLUX.2 Klein",
     provider: "black-forest-labs",
   },
   {
-    description: "GPT Image Generation Model",
-    id: "openai/dall-e-3",
-    name: "GPT Image 2",
-    provider: "openai",
+    description: "High-quality FLUX.2 image generation model",
+    id: "black-forest-labs/flux.2-pro",
+    name: "FLUX.2 Pro",
+    provider: "black-forest-labs",
   },
   {
-    description: "Nano Banana Pro Image Generation Model",
-    id: "stabilityai/stable-diffusion-xl",
-    name: "Nano Banana pro",
-    provider: "stabilityai",
+    description: "OpenAI GPT Image generation model",
+    id: "openai/gpt-image-1-mini",
+    name: "GPT Image Mini",
+    provider: "openai",
   },
   {
     description: "xAI Grok 4.5 frontier intelligence",
@@ -169,6 +169,14 @@ export async function getCapabilities(): Promise<
       const lowerId = model.id.toLowerCase();
       if (lowerId === "openai/o4-mini" || lowerId === "openai/o3-pro") {
         return [model.id, { reasoning: true, tools: true, vision: true }];
+      }
+      if (
+        lowerId.includes("flux.2") ||
+        lowerId.includes("gpt-image") ||
+        lowerId.includes("gemini-3.1-flash-image") ||
+        lowerId.includes("gemini-3-pro-image")
+      ) {
+        return [model.id, { reasoning: false, tools: false, vision: true }];
       }
       if (lowerId === "xai/grok-4.5") {
         return [model.id, { reasoning: false, tools: true, vision: true }];

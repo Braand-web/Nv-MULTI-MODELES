@@ -1,4 +1,4 @@
-import type { InferSelectModel } from "drizzle-orm";
+import type { InferInsertModel, InferSelectModel } from "drizzle-orm";
 import {
   boolean,
   foreignKey,
@@ -21,6 +21,9 @@ export const user = pgTable("User", {
   isAnonymous: boolean("isAnonymous").notNull().default(false),
   name: text("name"),
   password: varchar("password", { length: 64 }),
+  plan: varchar("plan", { enum: ["free", "pro", "elite"] })
+    .notNull()
+    .default("free"),
   updatedAt: timestamp("updatedAt").notNull().defaultNow(),
   credits: integer("credits").notNull().default(50),
 });
@@ -71,6 +74,45 @@ export const vote = pgTable(
 );
 
 export type Vote = InferSelectModel<typeof vote>;
+
+export const aiUsage = pgTable("AIUsage", {
+  chatId: uuid("chatId")
+    .notNull()
+    .references(() => chat.id),
+  complexity: varchar("complexity", {
+    enum: ["simple", "standard", "complex", "expert"],
+  }).notNull(),
+  createdAt: timestamp("createdAt").notNull().defaultNow(),
+  creditCost: integer("creditCost").notNull(),
+  error: text("error"),
+  hasImageInput: boolean("hasImageInput").notNull().default(false),
+  id: uuid("id").primaryKey().notNull().defaultRandom(),
+  isAutoSelection: boolean("isAutoSelection").notNull().default(false),
+  messageId: uuid("messageId"),
+  modelId: text("modelId").notNull(),
+  promptChars: integer("promptChars").notNull().default(0),
+  promptTokens: integer("promptTokens"),
+  completionTokens: integer("completionTokens"),
+  totalTokens: integer("totalTokens"),
+  providerCostUsdMicros: integer("providerCostUsdMicros"),
+  routeReason: text("routeReason"),
+  selectedModelId: text("selectedModelId").notNull(),
+  status: varchar("status", {
+    enum: ["completed", "errored", "aborted"],
+  })
+    .notNull()
+    .default("completed"),
+  task: varchar("task", {
+    enum: ["general", "code", "image", "reasoning", "vision"],
+  }).notNull(),
+  userId: uuid("userId")
+    .notNull()
+    .references(() => user.id),
+  userPlan: varchar("userPlan", { enum: ["free", "pro", "elite"] }).notNull(),
+});
+
+export type AIUsage = InferSelectModel<typeof aiUsage>;
+export type NewAIUsage = InferInsertModel<typeof aiUsage>;
 
 export const document = pgTable(
   "Document",

@@ -7,17 +7,19 @@ import {
   isStepCount,
   streamText,
   toUIMessageStream,
-  generateText,
 } from "ai";
 import { checkBotId } from "botid/server";
 import { after } from "next/server";
 import { createResumableStreamContext } from "resumable-stream";
 import { auth, type UserType } from "@/app/(auth)/auth";
-import { entitlementsByUserType } from "@/lib/ai/entitlements";
+import { entitlementsByPlan, normalizePlan } from "@/lib/ai/entitlements";
 import {
-  allowedModelIds,
+  analyzeRequest,
+  isImageGenerationModel,
+  selectModelForRequest,
+} from "@/lib/ai/model-router";
+import {
   chatModels,
-  DEFAULT_CHAT_MODEL,
   getCapabilities,
   getModelAvailability,
 } from "@/lib/ai/models";
@@ -41,7 +43,9 @@ import {
   updateChatTitleById,
   updateMessage,
   getUserById,
-  updateUserCredits,
+  deductUserCredits,
+  getModelPerformanceHints,
+  recordAiUsage,
 } from "@/lib/db/queries";
 import type { DBMessage } from "@/lib/db/schema";
 import { ChatbotError } from "@/lib/errors";
@@ -69,71 +73,13 @@ function getStreamContext() {
   }
 }
 
-function getModelCreditCost(modelId: string): number {
-  const id = modelId.toLowerCase();
-  if (
-    id.includes("flux") ||
-    id.includes("dall-e") ||
-    id.includes("gpt-image") ||
-    id.includes("banana")
-  ) {
-    return 10;
+function toUsdMicros(cost: unknown) {
+  const parsed = Number(cost);
+  if (!Number.isFinite(parsed)) {
+    return undefined;
   }
-  if (
-    id.includes("gpt-4o-mini") ||
-    id.includes("llama-3.1-8b") ||
-    id.includes("claude-3-haiku")
-  ) {
-    return 1;
-  }
-  if (
-    id.includes("gpt-4") ||
-    id.includes("claude-3-5") ||
-    id.includes("gemini-1.5-pro")
-  ) {
-    return 5;
-  }
-  return 2;
-}
 
-async function classifyPromptAuto(prompt: string): Promise<string> {
-  try {
-    const { text } = await generateText({
-      model: getLanguageModel("google/gemini-2.0-flash-exp:free"),
-      prompt: prompt,
-      system: `You are the central routing agent of the Origyn AI assistant.
-Your task is to analyze the user prompt and decide which AI model is best suited for it.
-Respond with a strict JSON object (and nothing else) in this format:
-{
-  "category": "image_generation" | "coding" | "general",
-  "suggestedModel": "string"
-}
-
-Allowed suggestedModel IDs:
-- "black-forest-labs/flux-1.1-pro" for any image generation request (e.g. create, draw, generate, paint a picture, logo, image, or artwork).
-- "qwen/qwen-2.5-coder-32b-instruct" for complex coding, script writing, algorithms, debugging, database queries, and technical program design.
-- "google/gemini-2.0-flash-exp:free" for general chat, creative writing, text translation, summaries, general queries, and other general tasks.
-
-Example user prompt: "Génère une image de chaton" -> suggestedModel: "black-forest-labs/flux-1.1-pro"
-Example user prompt: "Write a python script to parse CSV" -> suggestedModel: "qwen/qwen-2.5-coder-32b-instruct"
-Example user prompt: "Bonjour comment ça va?" -> suggestedModel: "google/gemini-2.0-flash-exp:free"`,
-    });
-
-    const cleanedText = text
-      .trim()
-      .replace(/^```json\s*/i, "")
-      .replace(/```$/, "");
-    const parsed = JSON.parse(cleanedText);
-    if (parsed.suggestedModel) {
-      return parsed.suggestedModel;
-    }
-  } catch (err) {
-    console.error(
-      "Auto router classification error, falling back to default:",
-      err
-    );
-  }
-  return "google/gemini-2.0-flash-exp:free";
+  return Math.round(parsed * 1_000_000);
 }
 
 export { getStreamContext };
@@ -171,18 +117,61 @@ export async function POST(request: Request) {
       return new ChatbotError("forbidden:chat").toResponse();
     }
 
-    let chatModel = selectedChatModel;
-    if (chatModel === "auto" && message) {
-      const userPrompt = getTextFromMessage(message);
-      chatModel = await classifyPromptAuto(userPrompt);
-    } else if (chatModel === "auto") {
-      chatModel = DEFAULT_CHAT_MODEL;
-    } else {
-      const isModelAllowed = allowedModelIds.has(selectedChatModel) || process.env.OPENROUTER_API_KEY;
-      chatModel = isModelAllowed ? selectedChatModel : DEFAULT_CHAT_MODEL;
+    const userType: UserType = session.user.type;
+    const userPlan = userType === "guest" ? "free" : normalizePlan(dbUser.plan);
+    const userPrompt = message ? getTextFromMessage(message) : "";
+    const hasImageInput =
+      message?.parts.some(
+        (part) => part.type === "file" && part.mediaType.startsWith("image/")
+      ) ?? false;
+    const requestAnalysis = analyzeRequest(userPrompt, hasImageInput);
+    const performanceHints = await getModelPerformanceHints({
+      complexity: requestAnalysis.complexity,
+      task: requestAnalysis.task,
+    });
+
+    const modelSelection = selectModelForRequest({
+      analysis: requestAnalysis,
+      allowUnlistedModels: Boolean(process.env.OPENROUTER_API_KEY),
+      credits: dbUser.credits,
+      hasImageInput,
+      performanceHints,
+      prompt: userPrompt,
+      selectedModelId: selectedChatModel,
+      userPlan,
+    });
+
+    if (!modelSelection.ok) {
+      return new Response(
+        JSON.stringify({
+          error: modelSelection.error,
+          message: modelSelection.message,
+          requiredCredits: modelSelection.requiredCredits,
+          requiredPlan: modelSelection.requiredPlan,
+        }),
+        {
+          headers: { "Content-Type": "application/json" },
+          status: modelSelection.status,
+        }
+      );
     }
 
-    const cost = getModelCreditCost(chatModel);
+    const chatModel = modelSelection.modelId;
+    const cost = modelSelection.creditCost;
+    const usageBase = {
+      chatId: id,
+      complexity: modelSelection.analysis.complexity,
+      creditCost: cost,
+      hasImageInput,
+      isAutoSelection: modelSelection.isAutoSelection,
+      modelId: chatModel,
+      promptChars: userPrompt.length,
+      routeReason: modelSelection.reason,
+      selectedModelId: selectedChatModel,
+      task: modelSelection.analysis.task,
+      userId: session.user.id,
+      userPlan,
+    };
     if (dbUser.credits < cost) {
       return new Response(
         JSON.stringify({
@@ -195,14 +184,12 @@ export async function POST(request: Request) {
 
     await checkIpRateLimit(ipAddress(request));
 
-    const userType: UserType = session.user.type;
-
     const messageCount = await getMessageCountByUserId({
       differenceInHours: 1,
       id: session.user.id,
     });
 
-    if (messageCount > entitlementsByUserType[userType].maxMessagesPerHour) {
+    if (messageCount > entitlementsByPlan[userPlan].maxMessagesPerHour) {
       return new ChatbotError("rate_limit:chat").toResponse();
     }
 
@@ -289,11 +276,7 @@ export async function POST(request: Request) {
       });
     }
 
-    const isImageModel =
-      chatModel.includes("flux") ||
-      chatModel.includes("dall-e") ||
-      chatModel.includes("sdxl") ||
-      chatModel.includes("stable-diffusion");
+    const isImageModel = isImageGenerationModel(chatModel);
 
     if (isImageModel && message) {
       const stream = createUIMessageStream({
@@ -321,9 +304,12 @@ export async function POST(request: Request) {
               "https://openrouter.ai/api/v1/images",
               {
                 body: JSON.stringify({
+                  n: 1,
                   model: chatModel,
+                  output_format: "png",
                   prompt: userPrompt,
                   response_format: "b64_json",
+                  size: "1024x1024",
                 }),
                 headers: {
                   Authorization: `Bearer ${openRouterKey}`,
@@ -386,9 +372,18 @@ export async function POST(request: Request) {
               ],
             });
 
-            await updateUserCredits({
-              credits: Math.max(0, dbUser.credits - 10),
+            await deductUserCredits({
+              credits: cost,
               id: session.user.id,
+            });
+            await recordAiUsage({
+              ...usageBase,
+              completionTokens: data.usage?.completion_tokens,
+              messageId: assistantMessageId,
+              promptTokens: data.usage?.prompt_tokens,
+              providerCostUsdMicros: toUsdMicros(data.usage?.cost),
+              status: "completed",
+              totalTokens: data.usage?.total_tokens,
             });
 
             dataStream.write({
@@ -576,9 +571,14 @@ export async function POST(request: Request) {
       },
       generateId: generateUUID,
       onEnd: async ({ messages: finishedMessages }) => {
+        const assistantMessageId = finishedMessages.find(
+          (finishedMsg) => finishedMsg.role === "assistant"
+        )?.id;
+        let creditsDeducted = false;
+
         try {
-          const newCredits = Math.max(0, dbUser.credits - cost);
-          await updateUserCredits({ id: session.user.id, credits: newCredits });
+          await deductUserCredits({ id: session.user.id, credits: cost });
+          creditsDeducted = true;
         } catch (err) {
           console.error("Failed to deduct credits:", err);
         }
@@ -622,6 +622,18 @@ export async function POST(request: Request) {
               role: currentMessage.role,
             })),
           });
+        }
+
+        if (assistantMessageId && creditsDeducted) {
+          try {
+            await recordAiUsage({
+              ...usageBase,
+              messageId: assistantMessageId,
+              status: "completed",
+            });
+          } catch (err) {
+            console.error("Failed to record AI usage:", err);
+          }
         }
       },
       onError: (error) => {
