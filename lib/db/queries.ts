@@ -9,6 +9,7 @@ import {
   gt,
   gte,
   inArray,
+  isNull,
   lt,
   sql,
   type SQL,
@@ -21,17 +22,24 @@ import type { ComplexityTier, TaskKind } from "@/lib/ai/model-router";
 import { ChatbotError } from "../errors";
 import { generateUUID } from "../utils";
 import {
+  apiKey,
+  type ApiKey,
   type Chat,
   aiUsage,
   chat,
   type DBMessage,
   document,
   message,
+  type NewUserSetting,
   type Suggestion,
   type NewAIUsage,
   stream,
   suggestion,
+  team,
+  teamMember,
+  type Team,
   type User,
+  userSetting,
   user,
   vote,
 } from "./schema";
@@ -39,6 +47,78 @@ import { generateHashedPassword } from "./utils";
 
 const client = postgres(process.env.POSTGRES_URL ?? "");
 const db = drizzle(client);
+
+export type UserSettingsUpdate = Partial<
+  Pick<
+    NewUserSetting,
+    | "agentActionsEnabled"
+    | "allowAnalytics"
+    | "allowModelImprovement"
+    | "appearance"
+    | "avatarUrl"
+    | "bio"
+    | "displayName"
+    | "instructions"
+    | "nickname"
+    | "webResearchEnabled"
+  >
+>;
+
+export async function getUserSettings(userId: string) {
+  try {
+    const [existing] = await db
+      .select()
+      .from(userSetting)
+      .where(eq(userSetting.userId, userId));
+
+    if (existing) {
+      return existing;
+    }
+
+    const [created] = await db
+      .insert(userSetting)
+      .values({ userId })
+      .onConflictDoNothing()
+      .returning();
+
+    if (created) {
+      return created;
+    }
+
+    const [retried] = await db
+      .select()
+      .from(userSetting)
+      .where(eq(userSetting.userId, userId));
+
+    if (!retried) {
+      throw new Error("Unable to initialize user settings");
+    }
+
+    return retried;
+  } catch (error) {
+    throw new ChatbotError("bad_request:database", { cause: error });
+  }
+}
+
+export async function updateUserSettings(
+  userId: string,
+  settings: UserSettingsUpdate
+) {
+  try {
+    const [updated] = await db
+      .insert(userSetting)
+      .values({ userId, ...settings, updatedAt: new Date() })
+      .onConflictDoUpdate({
+        set: { ...settings, updatedAt: new Date() },
+        target: userSetting.userId,
+      })
+      .returning();
+
+    return updated;
+  } catch (error) {
+    throw new ChatbotError("bad_request:database", { cause: error });
+  }
+}
 
 export async function getUser(email: string): Promise<User[]> {
   try {
@@ -677,6 +757,9 @@ export async function getModelPerformanceHints({
         COALESCE(SUM(CASE WHEN v."isUpvoted" = false THEN 1 ELSE 0 END), 0)::int AS "downvotes"
       FROM "AIUsage" au
       LEFT JOIN "Vote_v2" v ON v."messageId" = au."messageId"
+      INNER JOIN "UserSetting" us
+        ON us."userId" = au."userId"
+        AND us."allowModelImprovement" = true
       WHERE au."task" = ${task}
         AND au."complexity" = ${complexity}
         AND au."createdAt" > now() - interval '30 days'
@@ -698,5 +781,200 @@ export async function getModelPerformanceHints({
   } catch (error) {
     console.error("Failed to load model performance hints:", error);
     return {};
+  }
+}
+
+export type UsageSummary = {
+  providerCostUsdMicros: number;
+  requests: number;
+  totalCredits: number;
+  totalTokens: number;
+};
+
+type UsageSummaryRow = {
+  providerCostUsdMicros: number;
+  requests: number;
+  totalCredits: number;
+  totalTokens: number;
+};
+
+export async function getUsageSummary(userId: string): Promise<UsageSummary> {
+  try {
+    const [row] = (await client`
+      SELECT
+        COUNT(*)::int AS "requests",
+        COALESCE(SUM("creditCost"), 0)::int AS "totalCredits",
+        COALESCE(SUM("totalTokens"), 0)::int AS "totalTokens",
+        COALESCE(SUM("providerCostUsdMicros"), 0)::int AS "providerCostUsdMicros"
+      FROM "AIUsage"
+      WHERE "userId" = ${userId}
+        AND "createdAt" > now() - interval '30 days'
+        AND "status" = 'completed'
+    `) as unknown as UsageSummaryRow[];
+
+    return (
+      row ?? {
+        providerCostUsdMicros: 0,
+        requests: 0,
+        totalCredits: 0,
+        totalTokens: 0,
+      }
+    );
+  } catch (error) {
+    throw new ChatbotError("bad_request:database", { cause: error });
+  }
+}
+
+export async function listUserApiKeys(userId: string) {
+  try {
+    return await db
+      .select({
+        createdAt: apiKey.createdAt,
+        id: apiKey.id,
+        keyPrefix: apiKey.keyPrefix,
+        lastUsedAt: apiKey.lastUsedAt,
+        name: apiKey.name,
+      })
+      .from(apiKey)
+      .where(and(eq(apiKey.userId, userId), isNull(apiKey.revokedAt)))
+      .orderBy(desc(apiKey.createdAt));
+  } catch (error) {
+    throw new ChatbotError("bad_request:database", { cause: error });
+  }
+}
+
+export async function createUserApiKey({
+  keyHash,
+  keyPrefix,
+  name,
+  userId,
+}: {
+  keyHash: string;
+  keyPrefix: string;
+  name: string;
+  userId: string;
+}): Promise<ApiKey> {
+  try {
+    const [created] = await db
+      .insert(apiKey)
+      .values({ keyHash, keyPrefix, name, userId })
+      .returning();
+
+    if (!created) {
+      throw new Error("Unable to create API key");
+    }
+
+    return created;
+  } catch (error) {
+    throw new ChatbotError("bad_request:database", { cause: error });
+  }
+}
+
+export async function revokeUserApiKey({
+  id,
+  userId,
+}: {
+  id: string;
+  userId: string;
+}) {
+  try {
+    return await db
+      .update(apiKey)
+      .set({ revokedAt: new Date() })
+      .where(and(eq(apiKey.id, id), eq(apiKey.userId, userId)));
+  } catch (error) {
+    throw new ChatbotError("bad_request:database", { cause: error });
+  }
+}
+
+export async function listUserTeams(userId: string) {
+  try {
+    return await db
+      .select({
+        createdAt: team.createdAt,
+        id: team.id,
+        name: team.name,
+        role: teamMember.role,
+      })
+      .from(teamMember)
+      .innerJoin(team, eq(team.id, teamMember.teamId))
+      .where(eq(teamMember.userId, userId))
+      .orderBy(desc(team.createdAt));
+  } catch (error) {
+    throw new ChatbotError("bad_request:database", { cause: error });
+  }
+}
+
+export async function createUserTeam({
+  name,
+  userId,
+}: {
+  name: string;
+  userId: string;
+}): Promise<Team> {
+  try {
+    return await db.transaction(async (tx) => {
+      const [created] = await tx
+        .insert(team)
+        .values({ name, ownerId: userId })
+        .returning();
+
+      if (!created) {
+        throw new Error("Unable to create team");
+      }
+
+      await tx.insert(teamMember).values({
+        role: "owner",
+        teamId: created.id,
+        userId,
+      });
+
+      return created;
+    });
+  } catch (error) {
+    throw new ChatbotError("bad_request:database", { cause: error });
+  }
+}
+
+export async function deleteUserAccount(userId: string) {
+  try {
+    await db.transaction(async (tx) => {
+      const chatRows = await tx
+        .select({ id: chat.id })
+        .from(chat)
+        .where(eq(chat.userId, userId));
+      const chatIds = chatRows.map((row) => row.id);
+
+      const ownedTeamRows = await tx
+        .select({ id: team.id })
+        .from(team)
+        .where(eq(team.ownerId, userId));
+      const ownedTeamIds = ownedTeamRows.map((row) => row.id);
+
+      if (chatIds.length > 0) {
+        await tx.delete(vote).where(inArray(vote.chatId, chatIds));
+        await tx.delete(aiUsage).where(inArray(aiUsage.chatId, chatIds));
+        await tx.delete(stream).where(inArray(stream.chatId, chatIds));
+        await tx.delete(message).where(inArray(message.chatId, chatIds));
+        await tx.delete(chat).where(inArray(chat.id, chatIds));
+      }
+
+      if (ownedTeamIds.length > 0) {
+        await tx
+          .delete(teamMember)
+          .where(inArray(teamMember.teamId, ownedTeamIds));
+        await tx.delete(team).where(inArray(team.id, ownedTeamIds));
+      }
+
+      await tx.delete(suggestion).where(eq(suggestion.userId, userId));
+      await tx.delete(document).where(eq(document.userId, userId));
+      await tx.delete(aiUsage).where(eq(aiUsage.userId, userId));
+      await tx.delete(teamMember).where(eq(teamMember.userId, userId));
+      await tx.delete(apiKey).where(eq(apiKey.userId, userId));
+      await tx.delete(userSetting).where(eq(userSetting.userId, userId));
+      await tx.delete(user).where(eq(user.id, userId));
+    });
+  } catch (error) {
+    throw new ChatbotError("bad_request:database", { cause: error });
   }
 }

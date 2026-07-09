@@ -22,6 +22,13 @@
       "when": 1783605600000,
       "tag": "0002_ai_usage_telemetry",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1783639434187,
+      "tag": "0003_settings_saas_foundations",
+      "breakpoints": true
     }
   ]
 }

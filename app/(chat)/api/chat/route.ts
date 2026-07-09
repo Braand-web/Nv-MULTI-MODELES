@@ -43,6 +43,7 @@ import {
   updateChatTitleById,
   updateMessage,
   getUserById,
+  getUserSettings,
   deductUserCredits,
   getModelPerformanceHints,
   recordAiUsage,
@@ -116,6 +117,7 @@ export async function POST(request: Request) {
     if (!dbUser) {
       return new ChatbotError("forbidden:chat").toResponse();
     }
+    const userSettings = await getUserSettings(session.user.id);
 
     const userType: UserType = session.user.type;
     const userPlan = userType === "guest" ? "free" : normalizePlan(dbUser.plan);
@@ -125,10 +127,12 @@ export async function POST(request: Request) {
         (part) => part.type === "file" && part.mediaType.startsWith("image/")
       ) ?? false;
     const requestAnalysis = analyzeRequest(userPrompt, hasImageInput);
-    const performanceHints = await getModelPerformanceHints({
-      complexity: requestAnalysis.complexity,
-      task: requestAnalysis.task,
-    });
+    const performanceHints = userSettings.allowModelImprovement
+      ? await getModelPerformanceHints({
+          complexity: requestAnalysis.complexity,
+          task: requestAnalysis.task,
+        })
+      : {};
 
     const modelSelection = selectModelForRequest({
       analysis: requestAnalysis,
@@ -423,6 +427,29 @@ export async function POST(request: Request) {
     const supportsTools = capabilities?.tools === true;
 
     const modelMessages = await convertToModelMessages(uiMessages);
+    const activeTools = (
+      isReasoningModel && !supportsTools
+        ? []
+        : [
+            ...(userSettings.agentActionsEnabled
+              ? [
+                  "getWeather",
+                  "createDocument",
+                  "editDocument",
+                  "updateDocument",
+                  "requestSuggestions",
+                ]
+              : []),
+            ...(userSettings.webResearchEnabled ? ["searchWeb"] : []),
+          ]
+    ) as Array<
+      | "getWeather"
+      | "createDocument"
+      | "editDocument"
+      | "updateDocument"
+      | "requestSuggestions"
+      | "searchWeb"
+    >;
 
     const stream = createUIMessageStream({
       execute: async ({ writer: dataStream }) => {
@@ -490,17 +517,13 @@ export async function POST(request: Request) {
 
         const result = streamText({
           activeTools:
-            isReasoningModel && !supportsTools
-              ? []
-              : [
-                  "getWeather",
-                  "createDocument",
-                  "editDocument",
-                  "updateDocument",
-                  "requestSuggestions",
-                  "searchWeb",
-                ],
-          instructions: systemPrompt({ requestHints, supportsTools }),
+            activeTools,
+          instructions: systemPrompt({
+            requestHints,
+            supportsTools: activeTools.length > 0,
+            userInstructions: userSettings.instructions,
+            webResearchEnabled: userSettings.webResearchEnabled,
+          }),
           messages: modelMessages,
           model: getLanguageModel(chatModel),
           onAbort() {

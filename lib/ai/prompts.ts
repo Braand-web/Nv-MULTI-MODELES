@@ -89,17 +89,27 @@ About the origin of user's request:
 export const systemPrompt = ({
   requestHints,
   supportsTools,
+  userInstructions = "",
+  webResearchEnabled = true,
 }: {
   requestHints: RequestHints;
   supportsTools: boolean;
+  userInstructions?: string;
+  webResearchEnabled?: boolean;
 }) => {
   const requestPrompt = getRequestPromptFromHints(requestHints);
+  const preferencesPrompt = userInstructions.trim()
+    ? `\n\nUser preferences:\n${userInstructions.trim()}`
+    : "";
+  const webResearchPrompt = webResearchEnabled
+    ? ""
+    : "\n\nWeb research is disabled for this user. Do not call web search tools.";
 
   if (!supportsTools) {
-    return `${agentPrompt}\n\n${requestPrompt}`;
+    return `${agentPrompt}\n\n${requestPrompt}${preferencesPrompt}${webResearchPrompt}`;
   }
 
-  return `${agentPrompt}\n\n${requestPrompt}\n\n${artifactsPrompt}`;
+  return `${agentPrompt}\n\n${requestPrompt}${preferencesPrompt}${webResearchPrompt}\n\n${artifactsPrompt}`;
 };
 
 export const codePrompt = `

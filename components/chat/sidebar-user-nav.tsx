@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronUp, Coins } from "lucide-react";
+import { ChevronUp, Coins, Settings2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import type { User } from "next-auth";
 import { signOut, useSession } from "next-auth/react";
@@ -8,6 +8,7 @@ import { useTheme } from "next-themes";
 import { useCallback, useState } from "react";
 import useSWR from "swr";
 import { RechargeDialog } from "./recharge-dialog";
+import { SettingsDialog } from "./settings-dialog";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -39,6 +40,7 @@ export function SidebarUserNav({ user }: { user: User }) {
 
   const isGuest = guestRegex.test(data?.user?.email ?? "");
   const [showRecharge, setShowRecharge] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
   const { data: creditsData } = useSWR(
     status === "authenticated" && !isGuest ? "/api/user/credits" : null,
     (url: string) => fetch(url).then((res) => res.json()),
@@ -129,6 +131,13 @@ export function SidebarUserNav({ user }: { user: User }) {
             )}
             <DropdownMenuItem
               className="cursor-pointer text-[13px]"
+              onSelect={() => setShowSettings(true)}
+            >
+              <Settings2 className="size-3.5" />
+              Paramètres
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              className="cursor-pointer text-[13px]"
               data-testid="user-nav-item-theme"
               onSelect={handleThemeSelect}
             >
@@ -147,7 +156,18 @@ export function SidebarUserNav({ user }: { user: User }) {
           </DropdownMenuContent>
         </DropdownMenu>
       </SidebarMenuItem>
+      <SidebarMenuItem>
+        <SidebarMenuButton
+          className="h-8 rounded-lg text-sidebar-foreground/60 transition-colors duration-150 hover:bg-sidebar-accent hover:text-sidebar-foreground"
+          onClick={() => setShowSettings(true)}
+          tooltip="Paramètres"
+        >
+          <Settings2 className="size-4" />
+          <span className="text-[13px]">Paramètres</span>
+        </SidebarMenuButton>
+      </SidebarMenuItem>
       <RechargeDialog open={showRecharge} onOpenChange={setShowRecharge} />
+      <SettingsDialog open={showSettings} onOpenChange={setShowSettings} />
     </SidebarMenu>
   );
 }

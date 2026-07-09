@@ -32,7 +32,7 @@ describe("selectModelForRequest", () => {
     }
   });
 
-  test("rejects unaffordable auto requests before calling a model", () => {
+  test("routes zero-credit general requests to the temporary free model", () => {
     const selection = selectModelForRequest({
       credits: 0,
       prompt: "Resume ce texte",
@@ -40,9 +40,10 @@ describe("selectModelForRequest", () => {
       userPlan: "free",
     });
 
-    assert.equal(selection.ok, false);
-    if (!selection.ok) {
-      assert.equal(selection.error, "insufficient_credits");
+    assert.equal(selection.ok, true);
+    if (selection.ok) {
+      assert.equal(selection.creditCost, 0);
+      assert.equal(selection.modelId, "tencent/hy3:free");
     }
   });
 

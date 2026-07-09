@@ -2,6 +2,7 @@ import type { InferInsertModel, InferSelectModel } from "drizzle-orm";
 import {
   boolean,
   foreignKey,
+  index,
   json,
   pgTable,
   primaryKey,
@@ -29,6 +30,87 @@ export const user = pgTable("User", {
 });
 
 export type User = InferSelectModel<typeof user>;
+
+export const userSetting = pgTable("UserSetting", {
+  agentActionsEnabled: boolean("agentActionsEnabled").notNull().default(true),
+  allowAnalytics: boolean("allowAnalytics").notNull().default(true),
+  allowModelImprovement: boolean("allowModelImprovement")
+    .notNull()
+    .default(false),
+  appearance: varchar("appearance", {
+    enum: ["light", "dark", "system"],
+  })
+    .notNull()
+    .default("system"),
+  avatarUrl: text("avatarUrl").notNull().default(""),
+  bio: varchar("bio", { length: 280 }).notNull().default(""),
+  displayName: varchar("displayName", { length: 80 }).notNull().default(""),
+  instructions: text("instructions").notNull().default(""),
+  nickname: varchar("nickname", { length: 80 }).notNull().default(""),
+  updatedAt: timestamp("updatedAt").notNull().defaultNow(),
+  userId: uuid("userId")
+    .primaryKey()
+    .notNull()
+    .references(() => user.id),
+  webResearchEnabled: boolean("webResearchEnabled").notNull().default(true),
+});
+
+export type UserSetting = InferSelectModel<typeof userSetting>;
+export type NewUserSetting = InferInsertModel<typeof userSetting>;
+
+export const team = pgTable("Team", {
+  createdAt: timestamp("createdAt").notNull().defaultNow(),
+  id: uuid("id").primaryKey().notNull().defaultRandom(),
+  name: varchar("name", { length: 80 }).notNull(),
+  ownerId: uuid("ownerId")
+    .notNull()
+    .references(() => user.id),
+});
+
+export type Team = InferSelectModel<typeof team>;
+
+export const teamMember = pgTable(
+  "TeamMember",
+  {
+    createdAt: timestamp("createdAt").notNull().defaultNow(),
+    role: varchar("role", { enum: ["owner", "admin", "member"] })
+      .notNull()
+      .default("member"),
+    teamId: uuid("teamId")
+      .notNull()
+      .references(() => team.id),
+    userId: uuid("userId")
+      .notNull()
+      .references(() => user.id),
+  },
+  (table) => ({
+    pk: primaryKey({ columns: [table.teamId, table.userId] }),
+    userIdIdx: index("TeamMember_userId_idx").on(table.userId),
+  })
+);
+
+export type TeamMember = InferSelectModel<typeof teamMember>;
+
+export const apiKey = pgTable(
+  "ApiKey",
+  {
+    createdAt: timestamp("createdAt").notNull().defaultNow(),
+    id: uuid("id").primaryKey().notNull().defaultRandom(),
+    keyHash: varchar("keyHash", { length: 64 }).notNull().unique(),
+    keyPrefix: varchar("keyPrefix", { length: 16 }).notNull(),
+    lastUsedAt: timestamp("lastUsedAt"),
+    name: varchar("name", { length: 80 }).notNull(),
+    revokedAt: timestamp("revokedAt"),
+    userId: uuid("userId")
+      .notNull()
+      .references(() => user.id),
+  },
+  (table) => ({
+    userIdIdx: index("ApiKey_userId_idx").on(table.userId),
+  })
+);
+
+export type ApiKey = InferSelectModel<typeof apiKey>;
 
 export const chat = pgTable("Chat", {
   createdAt: timestamp("createdAt").notNull(),

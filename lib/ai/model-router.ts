@@ -1,5 +1,11 @@
 import type { PlanId } from "./entitlements";
-import { DEFAULT_CHAT_MODEL, allowedModelIds, chatModels } from "./models";
+import {
+  getDefaultChatModel,
+  isTencentHy3FreeAvailable,
+  TENCENT_HY3_FREE_MODEL,
+  allowedModelIds,
+  chatModels,
+} from "./models";
 
 export type TaskKind = "general" | "code" | "image" | "reasoning" | "vision";
 export type ComplexityTier = "simple" | "standard" | "complex" | "expert";
@@ -67,6 +73,15 @@ const COMPLEXITY_RANK: Record<ComplexityTier, number> = {
 };
 
 const MODEL_PROFILES: Record<string, Omit<ModelProfile, "id">> = {
+  [TENCENT_HY3_FREE_MODEL]: {
+    creditCost: 0,
+    maxComplexity: "expert",
+    minPlan: "free",
+    quality: 9,
+    speed: 7,
+    strengths: ["free-limited-time", "reasoning", "agent-workflows", "tools"],
+    tasks: ["general", "code", "reasoning"],
+  },
   "black-forest-labs/flux.2-klein-4b": {
     creditCost: 25,
     maxComplexity: "standard",
@@ -258,9 +273,14 @@ const MODEL_PROFILES: Record<string, Omit<ModelProfile, "id">> = {
   },
 };
 
-const MODEL_PROFILE_LIST = chatModels.map((model) =>
-  getModelRoutingProfile(model.id)
-);
+function getSelectableModelProfiles() {
+  return chatModels
+    .filter(
+      (model) =>
+        model.id !== TENCENT_HY3_FREE_MODEL || isTencentHy3FreeAvailable()
+    )
+    .map((model) => getModelRoutingProfile(model.id));
+}
 
 export function getModelRoutingProfile(modelId: string): ModelProfile {
   const profile = MODEL_PROFILES[modelId] ?? {
@@ -358,7 +378,7 @@ export function selectModelForRequest({
     });
   }
 
-  const candidates = MODEL_PROFILE_LIST.filter((profile) =>
+  const candidates = getSelectableModelProfiles().filter((profile) =>
     supportsTask(profile, analysis.task)
   );
 
@@ -433,10 +453,14 @@ function selectRequestedModel({
   selectedModelId: string;
   userPlan: PlanId;
 }): ModelSelection {
-  const modelId =
+  const requestedModelId =
     allowedModelIds.has(selectedModelId) || allowUnlistedModels
       ? selectedModelId
-      : DEFAULT_CHAT_MODEL;
+      : getDefaultChatModel();
+  const modelId =
+    requestedModelId === TENCENT_HY3_FREE_MODEL && !isTencentHy3FreeAvailable()
+      ? getDefaultChatModel()
+      : requestedModelId;
   const profile = getModelRoutingProfile(modelId);
 
   if (!hasPlanAccess(userPlan, profile.minPlan)) {

@@ -1,4 +1,26 @@
-export const DEFAULT_CHAT_MODEL = "moonshotai/kimi-k2.5";
+export const TENCENT_HY3_FREE_MODEL = "tencent/hy3:free";
+export const TENCENT_HY3_FREE_EXPIRES_AT = "2026-07-21T23:59:59.999Z";
+export const FALLBACK_CHAT_MODEL = "deepseek/deepseek-v3.2";
+
+export function isTencentHy3FreeAvailable(now = new Date()) {
+  return now.getTime() <= new Date(TENCENT_HY3_FREE_EXPIRES_AT).getTime();
+}
+
+export function getDefaultChatModel(now = new Date()) {
+  return isTencentHy3FreeAvailable(now)
+    ? TENCENT_HY3_FREE_MODEL
+    : FALLBACK_CHAT_MODEL;
+}
+
+export const DEFAULT_CHAT_MODEL = getDefaultChatModel();
+
+export function getModelFallbacks(modelId: string) {
+  if (modelId === TENCENT_HY3_FREE_MODEL) {
+    return [FALLBACK_CHAT_MODEL, "openai/gpt-oss-20b"];
+  }
+
+  return [FALLBACK_CHAT_MODEL];
+}
 
 export const titleModel = {
   description: "Fast model for title generation",
@@ -24,6 +46,14 @@ export type ChatModel = {
 };
 
 export const chatModels: ChatModel[] = [
+  {
+    description:
+      "Free through July 21, 2026. Strong reasoning and agent workflows with 262K context.",
+    id: TENCENT_HY3_FREE_MODEL,
+    name: "Tencent Hy3 Free",
+    provider: "tencent",
+    reasoningEffort: "high",
+  },
   {
     description: "Fast FLUX.2 image generation model",
     id: "black-forest-labs/flux.2-klein-4b",
@@ -169,6 +199,9 @@ export async function getCapabilities(): Promise<
       const lowerId = model.id.toLowerCase();
       if (lowerId === "openai/o4-mini" || lowerId === "openai/o3-pro") {
         return [model.id, { reasoning: true, tools: true, vision: true }];
+      }
+      if (lowerId === TENCENT_HY3_FREE_MODEL) {
+        return [model.id, { reasoning: true, tools: true, vision: false }];
       }
       if (
         lowerId.includes("flux.2") ||
