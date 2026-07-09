@@ -7,6 +7,7 @@ import {
   isStepCount,
   streamText,
   toUIMessageStream,
+  generateText,
 } from "ai";
 import { checkBotId } from "botid/server";
 import { after } from "next/server";
@@ -39,12 +40,14 @@ import {
   saveMessages,
   updateChatTitleById,
   updateMessage,
+  getUserById,
+  updateUserCredits,
 } from "@/lib/db/queries";
 import type { DBMessage } from "@/lib/db/schema";
 import { ChatbotError } from "@/lib/errors";
 import { checkIpRateLimit } from "@/lib/ratelimit";
 import type { ChatMessage, WaitingStatusData } from "@/lib/types";
-import { convertToUIMessages, generateUUID } from "@/lib/utils";
+import { convertToUIMessages, generateUUID, getTextFromMessage } from "@/lib/utils";
 import { generateTitleFromUserMessage } from "../../actions";
 import { type PostRequestBody, postRequestBodySchema } from "./schema";
 
@@ -64,6 +67,73 @@ function getStreamContext() {
   } catch {
     return null;
   }
+}
+
+function getModelCreditCost(modelId: string): number {
+  const id = modelId.toLowerCase();
+  if (
+    id.includes("flux") ||
+    id.includes("dall-e") ||
+    id.includes("gpt-image") ||
+    id.includes("banana")
+  ) {
+    return 10;
+  }
+  if (
+    id.includes("gpt-4o-mini") ||
+    id.includes("llama-3.1-8b") ||
+    id.includes("claude-3-haiku")
+  ) {
+    return 1;
+  }
+  if (
+    id.includes("gpt-4") ||
+    id.includes("claude-3-5") ||
+    id.includes("gemini-1.5-pro")
+  ) {
+    return 5;
+  }
+  return 2;
+}
+
+async function classifyPromptAuto(prompt: string): Promise<string> {
+  try {
+    const { text } = await generateText({
+      model: getLanguageModel("google/gemini-2.0-flash-exp:free"),
+      prompt: prompt,
+      system: `You are the central routing agent of the Origyn AI assistant.
+Your task is to analyze the user prompt and decide which AI model is best suited for it.
+Respond with a strict JSON object (and nothing else) in this format:
+{
+  "category": "image_generation" | "coding" | "general",
+  "suggestedModel": "string"
+}
+
+Allowed suggestedModel IDs:
+- "black-forest-labs/flux-1.1-pro" for any image generation request (e.g. create, draw, generate, paint a picture, logo, image, or artwork).
+- "qwen/qwen-2.5-coder-32b-instruct" for complex coding, script writing, algorithms, debugging, database queries, and technical program design.
+- "google/gemini-2.0-flash-exp:free" for general chat, creative writing, text translation, summaries, general queries, and other general tasks.
+
+Example user prompt: "Génère une image de chaton" -> suggestedModel: "black-forest-labs/flux-1.1-pro"
+Example user prompt: "Write a python script to parse CSV" -> suggestedModel: "qwen/qwen-2.5-coder-32b-instruct"
+Example user prompt: "Bonjour comment ça va?" -> suggestedModel: "google/gemini-2.0-flash-exp:free"`,
+    });
+
+    const cleanedText = text
+      .trim()
+      .replace(/^```json\s*/i, "")
+      .replace(/```$/, "");
+    const parsed = JSON.parse(cleanedText);
+    if (parsed.suggestedModel) {
+      return parsed.suggestedModel;
+    }
+  } catch (err) {
+    console.error(
+      "Auto router classification error, falling back to default:",
+      err
+    );
+  }
+  return "google/gemini-2.0-flash-exp:free";
 }
 
 export { getStreamContext };
@@ -95,10 +165,33 @@ export async function POST(request: Request) {
       return new ChatbotError("unauthorized:chat").toResponse();
     }
 
-    const isModelAllowed = allowedModelIds.has(selectedChatModel) || process.env.OPENROUTER_API_KEY;
-    const chatModel = isModelAllowed
-      ? selectedChatModel
-      : DEFAULT_CHAT_MODEL;
+    const users = await getUserById(session.user.id);
+    const dbUser = users[0];
+    if (!dbUser) {
+      return new ChatbotError("forbidden:chat").toResponse();
+    }
+
+    let chatModel = selectedChatModel;
+    if (chatModel === "auto" && message) {
+      const userPrompt = getTextFromMessage(message);
+      chatModel = await classifyPromptAuto(userPrompt);
+    } else if (chatModel === "auto") {
+      chatModel = DEFAULT_CHAT_MODEL;
+    } else {
+      const isModelAllowed = allowedModelIds.has(selectedChatModel) || process.env.OPENROUTER_API_KEY;
+      chatModel = isModelAllowed ? selectedChatModel : DEFAULT_CHAT_MODEL;
+    }
+
+    const cost = getModelCreditCost(chatModel);
+    if (dbUser.credits < cost) {
+      return new Response(
+        JSON.stringify({
+          error: "insufficient_credits",
+          message: "Vous n'avez pas assez de crédits pour utiliser ce modèle. Veuillez recharger votre solde.",
+        }),
+        { status: 402, headers: { "Content-Type": "application/json" } }
+      );
+    }
 
     await checkIpRateLimit(ipAddress(request));
 
@@ -193,6 +286,138 @@ export async function POST(request: Request) {
             role: "user",
           },
         ],
+      });
+    }
+
+    const isImageModel =
+      chatModel.includes("flux") ||
+      chatModel.includes("dall-e") ||
+      chatModel.includes("sdxl") ||
+      chatModel.includes("stable-diffusion");
+
+    if (isImageModel && message) {
+      const stream = createUIMessageStream({
+        execute: async ({ writer: dataStream }) => {
+          try {
+            dataStream.write({
+              type: "text-delta",
+              delta: "Génération de l'image en cours... 🚀\n\n",
+              id: generateUUID(),
+            });
+
+            const userPrompt = getTextFromMessage(message);
+            const openRouterKey = process.env.OPENROUTER_API_KEY;
+
+            if (!openRouterKey) {
+              dataStream.write({
+                type: "text-delta",
+                delta: "Erreur : La clé d'API OpenRouter n'est pas configurée.",
+                id: generateUUID(),
+              });
+              return;
+            }
+
+            const response = await fetch(
+              "https://openrouter.ai/api/v1/images",
+              {
+                body: JSON.stringify({
+                  model: chatModel,
+                  prompt: userPrompt,
+                  response_format: "b64_json",
+                }),
+                headers: {
+                  Authorization: `Bearer ${openRouterKey}`,
+                  "Content-Type": "application/json",
+                },
+                method: "POST",
+              }
+            );
+
+            if (!response.ok) {
+              const errText = await response.text();
+              console.error("OpenRouter image generation failed:", errText);
+              dataStream.write({
+                type: "text-delta",
+                delta: "Erreur : Échec de la génération de l'image via OpenRouter.",
+                id: generateUUID(),
+              });
+              return;
+            }
+
+            const data = await response.json();
+            const b64_json = data.data?.[0]?.b64_json;
+            if (!b64_json) {
+              dataStream.write({
+                type: "text-delta",
+                delta: "Erreur : Aucun contenu d'image retourné par le modèle.",
+                id: generateUUID(),
+              });
+              return;
+            }
+
+            const assistantMessageId = generateUUID();
+            const base64Url = `data:image/png;base64,${b64_json}`;
+            const markdown = `Voici l'image que j'ai générée pour vous :\n\n![Generated Image](${base64Url})`;
+
+            await saveMessages({
+              messages: [
+                {
+                  attachments: [
+                    {
+                      contentType: "image/png",
+                      name: "generated-image.png",
+                      url: base64Url,
+                    },
+                  ],
+                  chatId: id,
+                  createdAt: new Date(),
+                  id: assistantMessageId,
+                  parts: [
+                    { text: markdown, type: "text" },
+                    {
+                      filename: "generated-image.png",
+                      mediaType: "image/png",
+                      type: "file",
+                      url: base64Url,
+                    },
+                  ],
+                  role: "assistant",
+                },
+              ],
+            });
+
+            await updateUserCredits({
+              credits: Math.max(0, dbUser.credits - 10),
+              id: session.user.id,
+            });
+
+            dataStream.write({
+              type: "text-delta",
+              delta: markdown,
+              id: assistantMessageId,
+            });
+
+            if (titlePromise) {
+              try {
+                const title = await titlePromise;
+                dataStream.write({ data: title, type: "data-chat-title" });
+                updateChatTitleById({ chatId: id, title });
+              } catch {}
+            }
+          } catch (err) {
+            console.error("Image generation handler error:", err);
+            dataStream.write({
+              type: "text-delta",
+              delta: "Une erreur est survenue lors de la génération de l'image.",
+              id: generateUUID(),
+            });
+          }
+        },
+        generateId: generateUUID,
+      });
+
+      return createUIMessageStreamResponse({
+        stream,
       });
     }
 
@@ -351,6 +576,13 @@ export async function POST(request: Request) {
       },
       generateId: generateUUID,
       onEnd: async ({ messages: finishedMessages }) => {
+        try {
+          const newCredits = Math.max(0, dbUser.credits - cost);
+          await updateUserCredits({ id: session.user.id, credits: newCredits });
+        } catch (err) {
+          console.error("Failed to deduct credits:", err);
+        }
+
         if (isToolApprovalFlow) {
           await Promise.all(
             finishedMessages.map(async (finishedMsg) => {

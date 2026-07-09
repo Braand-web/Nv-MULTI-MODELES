@@ -9,6 +9,7 @@ import {
   timestamp,
   uuid,
   varchar,
+  integer,
 } from "drizzle-orm/pg-core";
 
 export const user = pgTable("User", {
@@ -21,6 +22,7 @@ export const user = pgTable("User", {
   name: text("name"),
   password: varchar("password", { length: 64 }),
   updatedAt: timestamp("updatedAt").notNull().defaultNow(),
+  credits: integer("credits").notNull().default(50),
 });
 
 export type User = InferSelectModel<typeof user>;

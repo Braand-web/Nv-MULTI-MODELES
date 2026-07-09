@@ -19,6 +19,8 @@ import {
 } from "@/hooks/use-artifact";
 import type { Attachment, ChatMessage } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { useSearchParams, useRouter } from "next/navigation";
+import { toast } from "./toast";
 import { Artifact } from "./artifact";
 import { ChatHeader } from "./chat-header";
 import { DataStreamHandler } from "./data-stream-handler";
@@ -47,6 +49,26 @@ export function ChatShell() {
     showCreditCardAlert,
     setShowCreditCardAlert,
   } = useActiveChat();
+
+  const searchParams = useSearchParams();
+  const router = useRouter();
+
+  useEffect(() => {
+    const payment = searchParams.get("payment");
+    if (payment === "success") {
+      toast({
+        type: "success",
+        description: "Votre recharge de crédits a été effectuée avec succès ! 🎉",
+      });
+      router.replace("/");
+    } else if (payment === "error") {
+      toast({
+        type: "error",
+        description: "Échec ou annulation de la recharge de crédits.",
+      });
+      router.replace("/");
+    }
+  }, [searchParams, router]);
 
   const [editingMessage, setEditingMessage] = useState<ChatMessage | null>(
     null

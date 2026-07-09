@@ -1,11 +1,13 @@
 "use client";
 
-import { ChevronUp } from "lucide-react";
+import { ChevronUp, Coins } from "lucide-react";
 import { useRouter } from "next/navigation";
 import type { User } from "next-auth";
 import { signOut, useSession } from "next-auth/react";
 import { useTheme } from "next-themes";
-import { useCallback } from "react";
+import { useCallback, useState } from "react";
+import useSWR from "swr";
+import { RechargeDialog } from "./recharge-dialog";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -36,6 +38,14 @@ export function SidebarUserNav({ user }: { user: User }) {
   const { setTheme, resolvedTheme } = useTheme();
 
   const isGuest = guestRegex.test(data?.user?.email ?? "");
+  const [showRecharge, setShowRecharge] = useState(false);
+  const { data: creditsData } = useSWR(
+    status === "authenticated" && !isGuest ? "/api/user/credits" : null,
+    (url: string) => fetch(url).then((res) => res.json()),
+    { refreshInterval: 10000 }
+  );
+  const credits = creditsData?.credits ?? 0;
+
   const handleThemeSelect = useCallback(() => {
     setTheme(resolvedTheme === "dark" ? "light" : "dark");
   }, [resolvedTheme, setTheme]);
@@ -99,6 +109,24 @@ export function SidebarUserNav({ user }: { user: User }) {
             data-testid="user-nav-menu"
             side="top"
           >
+            {!isGuest && (
+              <>
+                <div className="flex items-center justify-between px-2.5 py-2 text-xs border-b border-border/40">
+                  <span className="text-muted-foreground flex items-center gap-1">
+                    <Coins className="size-3.5 text-amber-500" />
+                    Crédits :
+                  </span>
+                  <span className="font-bold text-foreground">{credits}</span>
+                </div>
+                <DropdownMenuItem
+                  className="cursor-pointer text-[13px] text-blue-500 font-medium"
+                  onSelect={() => setShowRecharge(true)}
+                >
+                  🚀 Recharger des crédits
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+              </>
+            )}
             <DropdownMenuItem
               className="cursor-pointer text-[13px]"
               data-testid="user-nav-item-theme"
@@ -119,6 +147,7 @@ export function SidebarUserNav({ user }: { user: User }) {
           </DropdownMenuContent>
         </DropdownMenu>
       </SidebarMenuItem>
+      <RechargeDialog open={showRecharge} onOpenChange={setShowRecharge} />
     </SidebarMenu>
   );
 }

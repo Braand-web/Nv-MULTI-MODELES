@@ -589,3 +589,25 @@ export async function getStreamIdsByChatId({ chatId }: { chatId: string }) {
     throw new ChatbotError("bad_request:database", { cause: error });
   }
 }
+
+export async function getUserById(id: string): Promise<User[]> {
+  try {
+    return await db.select().from(user).where(eq(user.id, id));
+  } catch (error) {
+    throw new ChatbotError("bad_request:database", { cause: error });
+  }
+}
+
+export async function updateUserCredits({
+  id,
+  credits,
+}: {
+  id: string;
+  credits: number;
+}) {
+  try {
+    return await db.update(user).set({ credits }).where(eq(user.id, id));
+  } catch (error) {
+    throw new ChatbotError("bad_request:database", { cause: error });
+  }
+}

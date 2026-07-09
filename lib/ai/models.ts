@@ -25,6 +25,24 @@ export type ChatModel = {
 
 export const chatModels: ChatModel[] = [
   {
+    description: "FLUX 1.1 Pro Image Generation Model",
+    id: "black-forest-labs/flux-1.1-pro",
+    name: "FLUX 1.1 Pro",
+    provider: "black-forest-labs",
+  },
+  {
+    description: "GPT Image Generation Model",
+    id: "openai/dall-e-3",
+    name: "GPT Image 2",
+    provider: "openai",
+  },
+  {
+    description: "Nano Banana Pro Image Generation Model",
+    id: "stabilityai/stable-diffusion-xl",
+    name: "Nano Banana pro",
+    provider: "stabilityai",
+  },
+  {
     description: "Fast and capable model with tool use",
     gatewayOrder: ["bedrock", "deepinfra"],
     id: "deepseek/deepseek-v3.2",

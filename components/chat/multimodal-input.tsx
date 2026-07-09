@@ -898,12 +898,21 @@ function PureModelSelectorCompact({
   const capabilities: Record<string, ModelCapabilities> | undefined =
     modelsData?.capabilities ?? modelsData;
   const dynamicModels: ChatModel[] | undefined = modelsData?.models;
-  const activeModels = dynamicModels ?? chatModels;
+
+  const autoModel: ChatModel = {
+    id: "auto",
+    name: "🚀 AUTO Select",
+    provider: "auto",
+    description: "Sélection automatique du meilleur modèle selon votre demande",
+  };
+
+  const activeModels = dynamicModels 
+    ? [autoModel, ...dynamicModels]
+    : [autoModel, ...chatModels];
 
   const selectedModel =
     activeModels.find((m: ChatModel) => m.id === selectedModelId) ??
-    activeModels.find((m: ChatModel) => m.id === DEFAULT_CHAT_MODEL) ??
-    activeModels[0];
+    autoModel;
   const [provider] = selectedModel.id.split("/");
 
   return (
@@ -922,13 +931,17 @@ function PureModelSelectorCompact({
         <ModelSelectorInput placeholder="Search models..." />
         <ModelSelectorList>
           {(() => {
-            const curatedIds = new Set(chatModels.map((m) => m.id));
+            const curatedIds = new Set([
+              "auto",
+              ...chatModels.map((m) => m.id)
+            ]);
             const allModels = dynamicModels
               ? [
+                  autoModel,
                   ...chatModels,
                   ...dynamicModels.filter((m) => !curatedIds.has(m.id)),
                 ]
-              : chatModels;
+              : [autoModel, ...chatModels];
 
             const grouped: Record<
               string,
