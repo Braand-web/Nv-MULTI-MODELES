@@ -25,3 +25,5 @@ yarn-error.log*
 /playwright/*
 next-env.d.ts
 tsconfig.tsbuildinfo
+lib/db/db-mock.json
+lib/db/queries.ts.original
