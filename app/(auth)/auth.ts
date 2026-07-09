@@ -2,8 +2,9 @@ import { compare } from "bcrypt-ts";
 import NextAuth, { type DefaultSession } from "next-auth";
 import type { DefaultJWT } from "next-auth/jwt";
 import Credentials from "next-auth/providers/credentials";
+import Google from "next-auth/providers/google";
 import { DUMMY_PASSWORD } from "@/lib/constants";
-import { createGuestUser, getUser } from "@/lib/db/queries";
+import { createGuestUser, getUser, createUser } from "@/lib/db/queries";
 import { authConfig } from "./auth.config";
 
 export type UserType = "guest" | "regular";
@@ -38,10 +39,39 @@ export const {
 } = NextAuth({
   ...authConfig,
   callbacks: {
-    jwt({ token, user }) {
-      if (user) {
-        token.id = user.id as string;
-        token.type = user.type;
+    async signIn({ user: oauthUser, account }) {
+      if (account?.provider === "google") {
+        const email = oauthUser.email;
+        if (!email) return false;
+        
+        try {
+          const existingUsers = await getUser(email);
+          if (existingUsers.length === 0) {
+            await createUser(email);
+          }
+        } catch (err) {
+          console.error("Error signing in with Google:", err);
+          return false;
+        }
+      }
+      return true;
+    },
+    async jwt({ token, user: oauthUser, account }) {
+      if (oauthUser) {
+        if (account?.provider === "credentials" || account?.provider === "guest") {
+          token.id = oauthUser.id as string;
+          token.type = oauthUser.type;
+        } else {
+          const email = oauthUser.email;
+          if (email) {
+            const existingUsers = await getUser(email);
+            const dbUser = existingUsers[0];
+            if (dbUser) {
+              token.id = dbUser.id;
+              token.type = "regular";
+            }
+          }
+        }
       }
 
       return token;
@@ -94,6 +124,10 @@ export const {
       },
       credentials: {},
       id: "guest",
+    }),
+    Google({
+      clientId: process.env.GOOGLE_CLIENT_ID || process.env.AUTH_GOOGLE_ID,
+      clientSecret: process.env.GOOGLE_CLIENT_SECRET || process.env.AUTH_GOOGLE_SECRET,
     }),
   ],
 });

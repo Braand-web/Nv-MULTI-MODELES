@@ -2,11 +2,12 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useSession } from "next-auth/react";
+import { useSession, signIn } from "next-auth/react";
 import { useActionState, useEffect, useState } from "react";
 import { AuthForm } from "@/components/chat/auth-form";
 import { SubmitButton } from "@/components/chat/submit-button";
 import { toast } from "@/components/chat/toast";
+import { LogoGoogle } from "@/components/chat/icons";
 import { type RegisterActionState, register } from "../actions";
 
 export default function Page() {
@@ -51,6 +52,22 @@ export default function Page() {
       <p className="text-sm text-muted-foreground">Get started for free</p>
       <AuthForm action={handleSubmit} defaultEmail={email}>
         <SubmitButton isSuccessful={isSuccessful}>Sign up</SubmitButton>
+
+        <div className="relative flex py-2 items-center">
+          <div className="flex-grow border-t border-border/40"></div>
+          <span className="flex-shrink mx-4 text-[11px] text-muted-foreground/60 uppercase">ou continuer avec</span>
+          <div className="flex-grow border-t border-border/40"></div>
+        </div>
+
+        <button
+          type="button"
+          className="flex w-full items-center justify-center gap-2 rounded-lg border border-border/50 bg-muted/20 hover:bg-muted/40 text-foreground py-2 text-sm font-medium transition-all duration-200"
+          onClick={() => signIn("google")}
+        >
+          <LogoGoogle size={16} />
+          Google
+        </button>
+
         <p className="text-center text-[13px] text-muted-foreground">
           {"Have an account? "}
           <Link

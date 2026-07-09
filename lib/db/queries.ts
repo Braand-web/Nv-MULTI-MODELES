@@ -44,8 +44,8 @@ export async function getUser(email: string): Promise<User[]> {
   }
 }
 
-export async function createUser(email: string, password: string) {
-  const hashedPassword = generateHashedPassword(password);
+export async function createUser(email: string, password?: string) {
+  const hashedPassword = password ? generateHashedPassword(password) : null;
 
   try {
     return await db.insert(user).values({ email, password: hashedPassword });
