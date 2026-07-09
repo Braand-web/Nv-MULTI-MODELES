@@ -1,91 +1,54 @@
 import "server-only";
-import fs from "fs";
-import path from "path";
 
+import {
+  and,
+  asc,
+  count,
+  desc,
+  eq,
+  gt,
+  gte,
+  inArray,
+  lt,
+  type SQL,
+} from "drizzle-orm";
+import { drizzle } from "drizzle-orm/postgres-js";
+import postgres from "postgres";
 import type { ArtifactKind } from "@/components/chat/artifact";
 import type { VisibilityType } from "@/components/chat/visibility-selector";
 import { ChatbotError } from "../errors";
 import { generateUUID } from "../utils";
 import {
   type Chat,
+  chat,
   type DBMessage,
+  document,
+  message,
   type Suggestion,
+  stream,
+  suggestion,
   type User,
+  user,
+  vote,
 } from "./schema";
 import { generateHashedPassword } from "./utils";
 
-const MOCK_DB_PATH = path.join(process.cwd(), "lib", "db", "db-mock.json");
-
-interface MockDB {
-  users: any[];
-  chats: any[];
-  messages: any[];
-  votes: any[];
-  documents: any[];
-  suggestions: any[];
-  streams: any[];
-}
-
-function loadDB(): MockDB {
-  if (!fs.existsSync(MOCK_DB_PATH)) {
-    const initial: MockDB = {
-      users: [],
-      chats: [],
-      messages: [],
-      votes: [],
-      documents: [],
-      suggestions: [],
-      streams: []
-    };
-    fs.writeFileSync(MOCK_DB_PATH, JSON.stringify(initial, null, 2), "utf8");
-    return initial;
-  }
-  try {
-    return JSON.parse(fs.readFileSync(MOCK_DB_PATH, "utf8"));
-  } catch {
-    return {
-      users: [],
-      chats: [],
-      messages: [],
-      votes: [],
-      documents: [],
-      suggestions: [],
-      streams: []
-    };
-  }
-}
-
-function saveDB(data: MockDB) {
-  fs.writeFileSync(MOCK_DB_PATH, JSON.stringify(data, null, 2), "utf8");
-}
+const client = postgres(process.env.POSTGRES_URL ?? "");
+const db = drizzle(client);
 
 export async function getUser(email: string): Promise<User[]> {
   try {
-    const db = loadDB();
-    return db.users.filter(u => u.email === email);
+    return await db.select().from(user).where(eq(user.email, email));
   } catch (error) {
     throw new ChatbotError("bad_request:database", { cause: error });
   }
 }
 
 export async function createUser(email: string, password: string) {
+  const hashedPassword = generateHashedPassword(password);
+
   try {
-    const db = loadDB();
-    const hashedPassword = generateHashedPassword(password);
-    const newUser = {
-      id: generateUUID(),
-      email,
-      password: hashedPassword,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      emailVerified: false,
-      isAnonymous: false,
-      name: null,
-      image: null
-    };
-    db.users.push(newUser);
-    saveDB(db);
-    return [newUser];
+    return await db.insert(user).values({ email, password: hashedPassword });
   } catch (error) {
     throw new ChatbotError("bad_request:database", {
       cause: error,
@@ -94,27 +57,14 @@ export async function createUser(email: string, password: string) {
 }
 
 export async function createGuestUser() {
+  const email = `guest-${Date.now()}`;
+  const password = generateHashedPassword(generateUUID());
+
   try {
-    const db = loadDB();
-    const email = `guest-${Date.now()}`;
-    const password = generateHashedPassword(generateUUID());
-    const newUser = {
-      id: generateUUID(),
-      email,
-      password,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      emailVerified: false,
-      isAnonymous: true,
-      name: null,
-      image: null
-    };
-    db.users.push(newUser);
-    saveDB(db);
-    return [{
-      email: newUser.email,
-      id: newUser.id
-    }];
+    return await db.insert(user).values({ email, password }).returning({
+      email: user.email,
+      id: user.id,
+    });
   } catch (error) {
     throw new ChatbotError("bad_request:database", { cause: error });
   }
@@ -132,17 +82,13 @@ export async function saveChat({
   visibility: VisibilityType;
 }) {
   try {
-    const db = loadDB();
-    const newChat = {
+    return await db.insert(chat).values({
+      createdAt: new Date(),
       id,
-      userId,
       title,
+      userId,
       visibility,
-      createdAt: new Date().toISOString()
-    };
-    db.chats.push(newChat);
-    saveDB(db);
-    return newChat;
+    });
   } catch (error) {
     throw new ChatbotError("bad_request:database", {
       cause: error,
@@ -152,14 +98,15 @@ export async function saveChat({
 
 export async function deleteChatById({ id }: { id: string }) {
   try {
-    const db = loadDB();
-    db.votes = db.votes.filter(v => v.chatId !== id);
-    db.messages = db.messages.filter(m => m.chatId !== id);
-    db.streams = db.streams.filter(s => s.chatId !== id);
-    const deletedChat = db.chats.find(c => c.id === id);
-    db.chats = db.chats.filter(c => c.id !== id);
-    saveDB(db);
-    return deletedChat || null;
+    await db.delete(vote).where(eq(vote.chatId, id));
+    await db.delete(message).where(eq(message.chatId, id));
+    await db.delete(stream).where(eq(stream.chatId, id));
+
+    const [chatsDeleted] = await db
+      .delete(chat)
+      .where(eq(chat.id, id))
+      .returning();
+    return chatsDeleted;
   } catch (error) {
     throw new ChatbotError("bad_request:database", { cause: error });
   }
@@ -167,15 +114,27 @@ export async function deleteChatById({ id }: { id: string }) {
 
 export async function deleteAllChatsByUserId({ userId }: { userId: string }) {
   try {
-    const db = loadDB();
-    const userChats = db.chats.filter(c => c.userId === userId);
-    const chatIds = userChats.map(c => c.id);
-    db.votes = db.votes.filter(v => !chatIds.includes(v.chatId));
-    db.messages = db.messages.filter(m => !chatIds.includes(m.chatId));
-    db.streams = db.streams.filter(s => !chatIds.includes(s.chatId));
-    db.chats = db.chats.filter(c => c.userId !== userId);
-    saveDB(db);
-    return { deletedCount: userChats.length };
+    const userChats = await db
+      .select({ id: chat.id })
+      .from(chat)
+      .where(eq(chat.userId, userId));
+
+    if (userChats.length === 0) {
+      return { deletedCount: 0 };
+    }
+
+    const chatIds = userChats.map((c) => c.id);
+
+    await db.delete(vote).where(inArray(vote.chatId, chatIds));
+    await db.delete(message).where(inArray(message.chatId, chatIds));
+    await db.delete(stream).where(inArray(stream.chatId, chatIds));
+
+    const deletedChats = await db
+      .delete(chat)
+      .where(eq(chat.userId, userId))
+      .returning();
+
+    return { deletedCount: deletedChats.length };
   } catch (error) {
     throw new ChatbotError("bad_request:database", { cause: error });
   }
@@ -193,30 +152,58 @@ export async function getChatsByUserId({
   endingBefore: string | null;
 }) {
   try {
-    const db = loadDB();
-    let filteredChats = db.chats.filter(c => c.userId === id);
-    
-    // Sort by createdAt descending
-    filteredChats.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    const extendedLimit = limit + 1;
+
+    const query = (whereCondition?: SQL<unknown>) =>
+      db
+        .select()
+        .from(chat)
+        .where(
+          whereCondition
+            ? and(whereCondition, eq(chat.userId, id))
+            : eq(chat.userId, id)
+        )
+        .orderBy(desc(chat.createdAt))
+        .limit(extendedLimit);
+
+    let filteredChats: Chat[] = [];
 
     if (startingAfter) {
-      const selectedChat = db.chats.find(c => c.id === startingAfter);
+      const [selectedChat] = await db
+        .select()
+        .from(chat)
+        .where(eq(chat.id, startingAfter))
+        .limit(1);
+
       if (!selectedChat) {
-        throw new ChatbotError("not_found:database", `Chat with id ${startingAfter} not found`);
+        throw new ChatbotError(
+          "not_found:database",
+          `Chat with id ${startingAfter} not found`
+        );
       }
-      const date = new Date(selectedChat.createdAt).getTime();
-      filteredChats = filteredChats.filter(c => new Date(c.createdAt).getTime() > date);
+
+      filteredChats = await query(gt(chat.createdAt, selectedChat.createdAt));
     } else if (endingBefore) {
-      const selectedChat = db.chats.find(c => c.id === endingBefore);
+      const [selectedChat] = await db
+        .select()
+        .from(chat)
+        .where(eq(chat.id, endingBefore))
+        .limit(1);
+
       if (!selectedChat) {
-        throw new ChatbotError("not_found:database", `Chat with id ${endingBefore} not found`);
+        throw new ChatbotError(
+          "not_found:database",
+          `Chat with id ${endingBefore} not found`
+        );
       }
-      const date = new Date(selectedChat.createdAt).getTime();
-      filteredChats = filteredChats.filter(c => new Date(c.createdAt).getTime() < date);
+
+      filteredChats = await query(lt(chat.createdAt, selectedChat.createdAt));
+    } else {
+      filteredChats = await query();
     }
 
-    const extendedLimit = limit + 1;
     const hasMore = filteredChats.length > limit;
+
     return {
       chats: hasMore ? filteredChats.slice(0, limit) : filteredChats,
       hasMore,
@@ -228,9 +215,12 @@ export async function getChatsByUserId({
 
 export async function getChatById({ id }: { id: string }) {
   try {
-    const db = loadDB();
-    const selectedChat = db.chats.find(c => c.id === id);
-    return selectedChat || null;
+    const [selectedChat] = await db.select().from(chat).where(eq(chat.id, id));
+    if (!selectedChat) {
+      return null;
+    }
+
+    return selectedChat;
   } catch (error) {
     throw new ChatbotError("bad_request:database", {
       cause: error,
@@ -240,10 +230,7 @@ export async function getChatById({ id }: { id: string }) {
 
 export async function saveMessages({ messages }: { messages: DBMessage[] }) {
   try {
-    const db = loadDB();
-    db.messages.push(...messages);
-    saveDB(db);
-    return messages;
+    return await db.insert(message).values(messages);
   } catch (error) {
     throw new ChatbotError("bad_request:database", {
       cause: error,
@@ -259,13 +246,7 @@ export async function updateMessage({
   parts: DBMessage["parts"];
 }) {
   try {
-    const db = loadDB();
-    const msg = db.messages.find(m => m.id === id);
-    if (msg) {
-      msg.parts = parts;
-      saveDB(db);
-    }
-    return msg || null;
+    return await db.update(message).set({ parts }).where(eq(message.id, id));
   } catch (error) {
     throw new ChatbotError("bad_request:database", {
       cause: error,
@@ -275,10 +256,11 @@ export async function updateMessage({
 
 export async function getMessagesByChatId({ id }: { id: string }) {
   try {
-    const db = loadDB();
-    const chatMsgs = db.messages.filter(m => m.chatId === id);
-    chatMsgs.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
-    return chatMsgs;
+    return await db
+      .select()
+      .from(message)
+      .where(eq(message.chatId, id))
+      .orderBy(asc(message.createdAt));
   } catch (error) {
     throw new ChatbotError("bad_request:database", { cause: error });
   }
@@ -294,19 +276,22 @@ export async function voteMessage({
   type: "up" | "down";
 }) {
   try {
-    const db = loadDB();
-    const existingVote = db.votes.find(v => v.messageId === messageId);
+    const [existingVote] = await db
+      .select()
+      .from(vote)
+      .where(and(eq(vote.messageId, messageId)));
+
     if (existingVote) {
-      existingVote.isUpvoted = type === "up";
-      existingVote.chatId = chatId;
-    } else {
-      db.votes.push({
-        chatId,
-        messageId,
-        isUpvoted: type === "up"
-      });
+      return await db
+        .update(vote)
+        .set({ isUpvoted: type === "up" })
+        .where(and(eq(vote.messageId, messageId), eq(vote.chatId, chatId)));
     }
-    saveDB(db);
+    return await db.insert(vote).values({
+      chatId,
+      isUpvoted: type === "up",
+      messageId,
+    });
   } catch (error) {
     throw new ChatbotError("bad_request:database", {
       cause: error,
@@ -316,8 +301,7 @@ export async function voteMessage({
 
 export async function getVotesByChatId({ id }: { id: string }) {
   try {
-    const db = loadDB();
-    return db.votes.filter(v => v.chatId === id);
+    return await db.select().from(vote).where(eq(vote.chatId, id));
   } catch (error) {
     throw new ChatbotError("bad_request:database", { cause: error });
   }
@@ -337,18 +321,17 @@ export async function saveDocument({
   userId: string;
 }) {
   try {
-    const db = loadDB();
-    const newDoc = {
-      id,
-      title,
-      kind,
-      content,
-      userId,
-      createdAt: new Date().toISOString()
-    };
-    db.documents.push(newDoc);
-    saveDB(db);
-    return [newDoc];
+    return await db
+      .insert(document)
+      .values({
+        content,
+        createdAt: new Date(),
+        id,
+        kind,
+        title,
+        userId,
+      })
+      .returning();
   } catch (error) {
     throw new ChatbotError("bad_request:database", {
       cause: error,
@@ -364,16 +347,23 @@ export async function updateDocumentContent({
   content: string;
 }) {
   try {
-    const db = loadDB();
-    const docs = db.documents.filter(d => d.id === id);
-    docs.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-    const latest = docs[0];
+    const docs = await db
+      .select()
+      .from(document)
+      .where(eq(document.id, id))
+      .orderBy(desc(document.createdAt))
+      .limit(1);
+
+    const [latest] = docs;
     if (!latest) {
       throw new ChatbotError("not_found:database", "Document not found");
     }
-    latest.content = content;
-    saveDB(db);
-    return [latest];
+
+    return await db
+      .update(document)
+      .set({ content })
+      .where(and(eq(document.id, id), eq(document.createdAt, latest.createdAt)))
+      .returning();
   } catch (error) {
     if (error instanceof ChatbotError) {
       throw error;
@@ -386,10 +376,13 @@ export async function updateDocumentContent({
 
 export async function getDocumentsById({ id }: { id: string }) {
   try {
-    const db = loadDB();
-    const docs = db.documents.filter(d => d.id === id);
-    docs.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
-    return docs;
+    const documents = await db
+      .select()
+      .from(document)
+      .where(eq(document.id, id))
+      .orderBy(asc(document.createdAt));
+
+    return documents;
   } catch (error) {
     throw new ChatbotError("bad_request:database", { cause: error });
   }
@@ -397,10 +390,13 @@ export async function getDocumentsById({ id }: { id: string }) {
 
 export async function getDocumentById({ id }: { id: string }) {
   try {
-    const db = loadDB();
-    const docs = db.documents.filter(d => d.id === id);
-    docs.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-    return docs[0] || null;
+    const [selectedDocument] = await db
+      .select()
+      .from(document)
+      .where(eq(document.id, id))
+      .orderBy(desc(document.createdAt));
+
+    return selectedDocument;
   } catch (error) {
     throw new ChatbotError("bad_request:database", { cause: error });
   }
@@ -414,18 +410,19 @@ export async function deleteDocumentsByIdAfterTimestamp({
   timestamp: Date;
 }) {
   try {
-    const db = loadDB();
-    const timeLimit = new Date(timestamp).getTime();
-    
-    db.suggestions = db.suggestions.filter(s => {
-      return !(s.documentId === id && new Date(s.documentCreatedAt).getTime() > timeLimit);
-    });
-    
-    const deletedDocs = db.documents.filter(d => d.id === id && new Date(d.createdAt).getTime() > timeLimit);
-    db.documents = db.documents.filter(d => !(d.id === id && new Date(d.createdAt).getTime() > timeLimit));
-    
-    saveDB(db);
-    return deletedDocs;
+    await db
+      .delete(suggestion)
+      .where(
+        and(
+          eq(suggestion.documentId, id),
+          gt(suggestion.documentCreatedAt, timestamp)
+        )
+      );
+
+    return await db
+      .delete(document)
+      .where(and(eq(document.id, id), gt(document.createdAt, timestamp)))
+      .returning();
   } catch (error) {
     throw new ChatbotError("bad_request:database", { cause: error });
   }
@@ -437,10 +434,7 @@ export async function saveSuggestions({
   suggestions: Suggestion[];
 }) {
   try {
-    const db = loadDB();
-    db.suggestions.push(...suggestions);
-    saveDB(db);
-    return suggestions;
+    return await db.insert(suggestion).values(suggestions);
   } catch (error) {
     throw new ChatbotError("bad_request:database", { cause: error });
   }
@@ -452,8 +446,10 @@ export async function getSuggestionsByDocumentId({
   documentId: string;
 }) {
   try {
-    const db = loadDB();
-    return db.suggestions.filter(s => s.documentId === documentId);
+    return await db
+      .select()
+      .from(suggestion)
+      .where(eq(suggestion.documentId, documentId));
   } catch (error) {
     throw new ChatbotError("bad_request:database", { cause: error });
   }
@@ -461,8 +457,7 @@ export async function getSuggestionsByDocumentId({
 
 export async function getMessageById({ id }: { id: string }) {
   try {
-    const db = loadDB();
-    return db.messages.filter(m => m.id === id);
+    return await db.select().from(message).where(eq(message.id, id));
   } catch (error) {
     throw new ChatbotError("bad_request:database", { cause: error });
   }
@@ -476,17 +471,30 @@ export async function deleteMessagesByChatIdAfterTimestamp({
   timestamp: Date;
 }) {
   try {
-    const db = loadDB();
-    const timeLimit = new Date(timestamp).getTime();
-    const messagesToDelete = db.messages.filter(m => m.chatId === chatId && new Date(m.createdAt).getTime() >= timeLimit);
-    const messageIds = messagesToDelete.map(m => m.id);
-    
+    const messagesToDelete = await db
+      .select({ id: message.id })
+      .from(message)
+      .where(
+        and(eq(message.chatId, chatId), gte(message.createdAt, timestamp))
+      );
+
+    const messageIds = messagesToDelete.map(
+      (currentMessage) => currentMessage.id
+    );
+
     if (messageIds.length > 0) {
-      db.votes = db.votes.filter(v => !(v.chatId === chatId && messageIds.includes(v.messageId)));
-      db.messages = db.messages.filter(m => !messageIds.includes(m.id));
-      saveDB(db);
+      await db
+        .delete(vote)
+        .where(
+          and(eq(vote.chatId, chatId), inArray(vote.messageId, messageIds))
+        );
+
+      return await db
+        .delete(message)
+        .where(
+          and(eq(message.chatId, chatId), inArray(message.id, messageIds))
+        );
     }
-    return messagesToDelete;
   } catch (error) {
     throw new ChatbotError("bad_request:database", { cause: error });
   }
@@ -500,13 +508,7 @@ export async function updateChatVisibilityById({
   visibility: "private" | "public";
 }) {
   try {
-    const db = loadDB();
-    const selectedChat = db.chats.find(c => c.id === chatId);
-    if (selectedChat) {
-      selectedChat.visibility = visibility;
-      saveDB(db);
-    }
-    return selectedChat || null;
+    return await db.update(chat).set({ visibility }).where(eq(chat.id, chatId));
   } catch (error) {
     throw new ChatbotError("bad_request:database", { cause: error });
   }
@@ -520,12 +522,7 @@ export async function updateChatTitleById({
   title: string;
 }) {
   try {
-    const db = loadDB();
-    const selectedChat = db.chats.find(c => c.id === chatId);
-    if (selectedChat) {
-      selectedChat.title = title;
-      saveDB(db);
-    }
+    return await db.update(chat).set({ title }).where(eq(chat.id, chatId));
   } catch {
     // Best effort title update.
   }
@@ -539,16 +536,24 @@ export async function getMessageCountByUserId({
   differenceInHours: number;
 }) {
   try {
-    const db = loadDB();
-    const cutoffTime = Date.now() - differenceInHours * 60 * 60 * 1000;
-    
-    const userChatIds = db.chats.filter(c => c.userId === id).map(c => c.id);
-    const recentMsgs = db.messages.filter(m => 
-      userChatIds.includes(m.chatId) && 
-      new Date(m.createdAt).getTime() >= cutoffTime &&
-      m.role === "user"
+    const cutoffTime = new Date(
+      Date.now() - differenceInHours * 60 * 60 * 1000
     );
-    return recentMsgs.length;
+
+    const [stats] = await db
+      .select({ count: count(message.id) })
+      .from(message)
+      .innerJoin(chat, eq(message.chatId, chat.id))
+      .where(
+        and(
+          eq(chat.userId, id),
+          gte(message.createdAt, cutoffTime),
+          eq(message.role, "user")
+        )
+      )
+      .execute();
+
+    return stats?.count ?? 0;
   } catch (error) {
     throw new ChatbotError("bad_request:database", { cause: error });
   }
@@ -562,13 +567,9 @@ export async function createStreamId({
   chatId: string;
 }) {
   try {
-    const db = loadDB();
-    db.streams.push({
-      chatId,
-      id: streamId,
-      createdAt: new Date().toISOString()
-    });
-    saveDB(db);
+    await db
+      .insert(stream)
+      .values({ chatId, createdAt: new Date(), id: streamId });
   } catch (error) {
     throw new ChatbotError("bad_request:database", { cause: error });
   }
@@ -576,10 +577,14 @@ export async function createStreamId({
 
 export async function getStreamIdsByChatId({ chatId }: { chatId: string }) {
   try {
-    const db = loadDB();
-    const chatStreams = db.streams.filter(s => s.chatId === chatId);
-    chatStreams.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
-    return chatStreams.map(s => s.id);
+    const streamIds = await db
+      .select({ id: stream.id })
+      .from(stream)
+      .where(eq(stream.chatId, chatId))
+      .orderBy(asc(stream.createdAt))
+      .execute();
+
+    return streamIds.map(({ id }) => id);
   } catch (error) {
     throw new ChatbotError("bad_request:database", { cause: error });
   }
