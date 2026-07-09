@@ -255,6 +255,45 @@ const PurePreviewMessage = ({
       );
     }
 
+    if (type === "tool-searchWeb") {
+      const { toolCallId, state } = part;
+      const widthClass = "w-[min(100%,450px)]";
+
+      return (
+        <div className={widthClass} key={toolCallId}>
+          <Tool className="w-full" defaultOpen={true}>
+            <ToolHeader state={state} type="tool-searchWeb" title="Recherche Web" />
+            <ToolContent>
+              {state === "input-available" && <ToolInput input={part.input} />}
+              {state === "output-available" && (
+                <div className="flex flex-col gap-2.5 text-xs text-muted-foreground">
+                  {"error" in part.output ? (
+                    <div className="text-red-500">{String(part.output.error)}</div>
+                  ) : (
+                    part.output.results?.map((res: any, idx: number) => (
+                      <div key={idx} className="border-b border-border/40 pb-2 last:border-0 last:pb-0">
+                        <a
+                          href={res.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="font-semibold text-primary hover:underline block truncate"
+                        >
+                          {res.title || res.url}
+                        </a>
+                        <p className="line-clamp-2 mt-0.5 text-muted-foreground/80">
+                          {res.content}
+                        </p>
+                      </div>
+                    ))
+                  )}
+                </div>
+              )}
+            </ToolContent>
+          </Tool>
+        </div>
+      );
+    }
+
     if (type === "tool-createDocument") {
       const { toolCallId } = part;
 

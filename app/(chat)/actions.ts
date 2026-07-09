@@ -12,8 +12,11 @@ import {
   getChatById,
   getMessageById,
   updateChatVisibilityById,
+  saveChat,
+  saveMessages,
+  getMessagesByChatId,
 } from "@/lib/db/queries";
-import { getTextFromMessage } from "@/lib/utils";
+import { getTextFromMessage, generateUUID } from "@/lib/utils";
 
 export async function saveChatModelAsCookie(model: string) {
   const cookieStore = await cookies();
@@ -79,4 +82,42 @@ export async function updateChatVisibility({
   }
 
   await updateChatVisibilityById({ chatId, visibility });
+}
+
+export async function cloneChat({ chatId }: { chatId: string }) {
+  const session = await auth();
+  if (!session?.user?.id) {
+    throw new Error("Unauthorized");
+  }
+
+  const chat = await getChatById({ id: chatId });
+  if (!chat) {
+    throw new Error("Chat not found");
+  }
+
+  if (chat.visibility !== "public" && chat.userId !== session.user.id) {
+    throw new Error("Unauthorized");
+  }
+
+  const messages = await getMessagesByChatId({ id: chatId });
+
+  const newChatId = generateUUID();
+  await saveChat({
+    id: newChatId,
+    title: `${chat.title} (copie)`,
+    userId: session.user.id,
+    visibility: "private",
+  });
+
+  if (messages.length > 0) {
+    const newMessages = messages.map((msg) => ({
+      ...msg,
+      chatId: newChatId,
+      createdAt: new Date(),
+      id: generateUUID(),
+    }));
+    await saveMessages({ messages: newMessages });
+  }
+
+  return newChatId;
 }

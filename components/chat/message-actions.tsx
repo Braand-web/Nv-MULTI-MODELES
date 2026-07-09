@@ -1,5 +1,6 @@
 import equal from "fast-deep-equal";
-import { memo, useCallback } from "react";
+import { memo, useCallback, useState, useEffect } from "react";
+import { Volume2, VolumeX } from "lucide-react";
 import { toast } from "sonner";
 import { useSWRConfig } from "swr";
 import { useCopyToClipboard } from "usehooks-ts";
@@ -26,6 +27,15 @@ export function PureMessageActions({
 }) {
   const { mutate } = useSWRConfig();
   const [_, copyToClipboard] = useCopyToClipboard();
+  const [isSpeaking, setIsSpeaking] = useState(false);
+
+  useEffect(() => {
+    return () => {
+      if (typeof window !== "undefined" && window.speechSynthesis) {
+        window.speechSynthesis.cancel();
+      }
+    };
+  }, []);
 
   const textFromParts = message.parts
     ?.filter((part) => part.type === "text")
@@ -42,6 +52,44 @@ export function PureMessageActions({
     await copyToClipboard(textFromParts);
     toast.success("Copied to clipboard!");
   }, [copyToClipboard, textFromParts]);
+
+  const handleSpeak = useCallback(() => {
+    if (typeof window === "undefined" || !window.speechSynthesis) {
+      toast.error("Votre navigateur ne prend pas en charge la synthèse vocale.");
+      return;
+    }
+
+    if (isSpeaking) {
+      window.speechSynthesis.cancel();
+      setIsSpeaking(false);
+      return;
+    }
+
+    window.speechSynthesis.cancel();
+
+    if (!textFromParts) {
+      toast.error("Aucun texte à lire !");
+      return;
+    }
+
+    const utterance = new SpeechSynthesisUtterance(textFromParts);
+    
+    // Set a French voice if available
+    const voices = window.speechSynthesis.getVoices();
+    const frenchVoice = voices.find(
+      (voice) => voice.lang.startsWith("fr") || voice.lang.includes("FR")
+    );
+    if (frenchVoice) {
+      utterance.voice = frenchVoice;
+    }
+    utterance.lang = "fr-FR";
+
+    utterance.onend = () => setIsSpeaking(false);
+    utterance.onerror = () => setIsSpeaking(false);
+
+    setIsSpeaking(true);
+    window.speechSynthesis.speak(utterance);
+  }, [textFromParts, isSpeaking]);
 
   const handleUpvote = useCallback(() => {
     const upvote = fetch(
@@ -171,6 +219,14 @@ export function PureMessageActions({
         tooltip="Copy"
       >
         <CopyIcon />
+      </Action>
+
+      <Action
+        className="text-muted-foreground/50 hover:text-foreground"
+        onClick={handleSpeak}
+        tooltip={isSpeaking ? "Arrêter la lecture" : "Lire à haute voix"}
+      >
+        {isSpeaking ? <VolumeX className="size-4" /> : <Volume2 className="size-4" />}
       </Action>
 
       <Action
