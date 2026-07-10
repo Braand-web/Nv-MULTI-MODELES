@@ -498,7 +498,9 @@ const PurePreviewMessage = ({
   );
 };
 
-export const PreviewMessage = memo(PurePreviewMessage);
+// The AI SDK updates the in-flight message object incrementally. Memoizing this
+// parent can therefore leave the last streamed chunks out of the UI.
+export const PreviewMessage = PurePreviewMessage;
 
 export const ThinkingMessage = () => (
   <div

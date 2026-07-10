@@ -29,6 +29,13 @@
       "when": 1783639434187,
       "tag": "0003_settings_saas_foundations",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1783670614179,
+      "tag": "0004_billing_plans_and_payments",
+      "breakpoints": true
     }
   ]
 }

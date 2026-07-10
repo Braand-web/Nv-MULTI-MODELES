@@ -68,6 +68,12 @@ export function ChatShell() {
         description: "Échec ou annulation de la recharge de crédits.",
       });
       router.replace("/");
+    } else if (payment === "pending") {
+      toast({
+        type: "success",
+        description: "Paiement en cours de confirmation. Vos credits arriveront automatiquement.",
+      });
+      router.replace("/");
     }
   }, [searchParams, router]);
 

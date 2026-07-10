@@ -120,7 +120,10 @@ export async function POST(request: Request) {
     const userSettings = await getUserSettings(session.user.id);
 
     const userType: UserType = session.user.type;
-    const userPlan = userType === "guest" ? "free" : normalizePlan(dbUser.plan);
+    const userPlan =
+      userType === "guest"
+        ? "free"
+        : normalizePlan(dbUser.plan, dbUser.planExpiresAt);
     const userPrompt = message ? getTextFromMessage(message) : "";
     const hasImageInput =
       message?.parts.some(

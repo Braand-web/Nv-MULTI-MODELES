@@ -1,5 +1,12 @@
+import { randomUUID } from "node:crypto";
 import { auth } from "@/app/(auth)/auth";
+import { getBillingProduct } from "@/lib/billing/catalog";
+import { initiateFapshiPayment } from "@/lib/billing/fapshi";
+import { createPendingPayment, getUserById } from "@/lib/db/queries";
 import { NextResponse } from "next/server";
+import { z } from "zod";
+
+const checkoutSchema = z.object({ productId: z.string().trim().min(1).max(64) });
 
 export async function POST(request: Request) {
   const session = await auth();
@@ -7,62 +14,63 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  const parsed = checkoutSchema.safeParse(await request.json());
+  if (!parsed.success) {
+    return NextResponse.json({ error: "Invalid checkout product" }, { status: 400 });
+  }
+
+  const product = getBillingProduct(parsed.data.productId);
+  if (!product) {
+    return NextResponse.json({ error: "Unknown checkout product" }, { status: 404 });
+  }
+
+  const [dbUser] = await getUserById(session.user.id);
+  if (!dbUser) {
+    return NextResponse.json({ error: "User not found" }, { status: 404 });
+  }
+
   try {
-    const { amount } = await request.json();
-    if (!amount || amount < 100) {
-      return NextResponse.json(
-        { error: "Amount must be at least 100 FCFA" },
-        { status: 400 }
-      );
-    }
-
-    const apiUser = process.env.FAPSHI_API_USER;
-    const apiKey = process.env.FAPSHI_API_KEY;
-
-    if (!apiUser || !apiKey) {
-      return NextResponse.json(
-        { error: "Fapshi API credentials not configured" },
-        { status: 500 }
-      );
-    }
-
-    const isLive = process.env.FAPSHI_ENV === "live";
-    const baseUrl = isLive
-      ? "https://live.fapshi.com"
-      : "https://sandbox.fapshi.com";
-    const hostUrl =
-      process.env.NEXTAUTH_URL || "https://origyn-liard.vercel.app";
-
-    const response = await fetch(`${baseUrl}/initiate-pay`, {
-      body: JSON.stringify({
-        amount: Number(amount),
-        email: session.user.email || "customer@origyn.ai",
-        externalId: `recharge_${session.user.id}_${Date.now()}`,
-        message: `Achat de ${amount} crédits pour Origyn`,
-        redirectUrl: `${hostUrl}/api/payment/callback`,
-        userId: session.user.id,
-      }),
-      headers: {
-        "Content-Type": "application/json",
-        apikey: apiKey,
-        apiuser: apiUser,
-      },
-      method: "POST",
+    const externalId = `origyn_${randomUUID()}`;
+    const now = new Date();
+    const startsAt =
+      dbUser.planExpiresAt && dbUser.planExpiresAt > now
+        ? dbUser.planExpiresAt
+        : now;
+    const periodEndsAt = product.intervalDays
+      ? new Date(startsAt.getTime() + product.intervalDays * 86_400_000)
+      : undefined;
+    const origin = new URL(request.url).origin;
+    const checkout = await initiateFapshiPayment({
+      amount: product.priceXaf,
+      email: session.user.email ?? "customer@origyn.ai",
+      externalId,
+      message: `${product.label} - Origyn`,
+      redirectUrl: `${origin}/api/payment/callback`,
+      userId: session.user.id,
     });
 
-    if (!response.ok) {
-      const errText = await response.text();
-      console.error("Fapshi error response:", errText);
-      return NextResponse.json(
-        { error: "Failed to initiate payment" },
-        { status: 500 }
-      );
+    if (!checkout.link || !checkout.transId) {
+      throw new Error("Fapshi did not return a checkout transaction");
     }
 
-    const data = await response.json();
-    return NextResponse.json({ url: data.link });
-  } catch (err) {
-    console.error("Payment initiation error:", err);
-    return NextResponse.json({ error: "Internal error" }, { status: 500 });
+    await createPendingPayment({
+      amountXaf: product.priceXaf,
+      creditAmount: product.credits,
+      externalId,
+      kind: product.kind,
+      periodEndsAt,
+      plan: product.plan,
+      productId: product.id,
+      providerTransactionId: checkout.transId,
+      userId: session.user.id,
+    });
+
+    return NextResponse.json({ url: checkout.link });
+  } catch (error) {
+    console.error("Unable to initiate Fapshi checkout:", error);
+    return NextResponse.json(
+      { error: "Unable to initiate payment. Please try again." },
+      { status: 502 }
+    );
   }
 }

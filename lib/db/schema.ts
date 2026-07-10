@@ -25,6 +25,7 @@ export const user = pgTable("User", {
   plan: varchar("plan", { enum: ["free", "pro", "elite"] })
     .notNull()
     .default("free"),
+  planExpiresAt: timestamp("planExpiresAt"),
   updatedAt: timestamp("updatedAt").notNull().defaultNow(),
   credits: integer("credits").notNull().default(50),
 });
@@ -111,6 +112,77 @@ export const apiKey = pgTable(
 );
 
 export type ApiKey = InferSelectModel<typeof apiKey>;
+
+export const payment = pgTable(
+  "Payment",
+  {
+    amountXaf: integer("amountXaf").notNull(),
+    completedAt: timestamp("completedAt"),
+    createdAt: timestamp("createdAt").notNull().defaultNow(),
+    creditAmount: integer("creditAmount").notNull().default(0),
+    externalId: varchar("externalId", { length: 120 }).notNull().unique(),
+    id: uuid("id").primaryKey().notNull().defaultRandom(),
+    kind: varchar("kind", { enum: ["credits", "plan"] }).notNull(),
+    periodEndsAt: timestamp("periodEndsAt"),
+    plan: varchar("plan", { enum: ["free", "pro", "elite"] }),
+    productId: varchar("productId", { length: 64 }).notNull(),
+    provider: varchar("provider", { length: 32 }).notNull().default("fapshi"),
+    providerTransactionId: varchar("providerTransactionId", { length: 120 })
+      .notNull()
+      .unique(),
+    status: varchar("status", {
+      enum: ["pending", "successful", "failed", "expired"],
+    })
+      .notNull()
+      .default("pending"),
+    updatedAt: timestamp("updatedAt").notNull().defaultNow(),
+    userId: uuid("userId")
+      .notNull()
+      .references(() => user.id),
+  },
+  (table) => ({
+    statusCreatedAtIdx: index("Payment_status_createdAt_idx").on(
+      table.status,
+      table.createdAt
+    ),
+    userIdCreatedAtIdx: index("Payment_userId_createdAt_idx").on(
+      table.userId,
+      table.createdAt
+    ),
+  })
+);
+
+export type Payment = InferSelectModel<typeof payment>;
+
+export const subscription = pgTable(
+  "Subscription",
+  {
+    createdAt: timestamp("createdAt").notNull().defaultNow(),
+    id: uuid("id").primaryKey().notNull().defaultRandom(),
+    paymentId: uuid("paymentId")
+      .notNull()
+      .unique()
+      .references(() => payment.id),
+    periodEndsAt: timestamp("periodEndsAt").notNull(),
+    periodStartsAt: timestamp("periodStartsAt").notNull(),
+    plan: varchar("plan", { enum: ["pro", "elite"] }).notNull(),
+    status: varchar("status", { enum: ["active", "expired", "cancelled"] })
+      .notNull()
+      .default("active"),
+    updatedAt: timestamp("updatedAt").notNull().defaultNow(),
+    userId: uuid("userId")
+      .notNull()
+      .references(() => user.id),
+  },
+  (table) => ({
+    userIdStatusIdx: index("Subscription_userId_status_idx").on(
+      table.userId,
+      table.status
+    ),
+  })
+);
+
+export type Subscription = InferSelectModel<typeof subscription>;
 
 export const chat = pgTable("Chat", {
   createdAt: timestamp("createdAt").notNull(),

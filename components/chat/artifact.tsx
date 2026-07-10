@@ -172,7 +172,7 @@ function PureArtifact({
             return currentDocuments;
           }
 
-          await fetch(
+          const response = await fetch(
             `${process.env.NEXT_PUBLIC_BASE_PATH ?? ""}/api/document?id=${artifact.documentId}`,
             {
               body: JSON.stringify({
@@ -181,9 +181,14 @@ function PureArtifact({
                 kind: artifact.kind,
                 title: artifact.title,
               }),
+              headers: { "Content-Type": "application/json" },
               method: "POST",
             }
           );
+
+          if (!response.ok) {
+            throw new Error("Unable to save artifact content");
+          }
 
           setIsContentDirty(false);
 
@@ -219,6 +224,17 @@ function PureArtifact({
         }, 2000);
       } else {
         handleContentChange(updatedContent);
+      }
+    },
+    [handleContentChange]
+  );
+
+  useEffect(
+    () => () => {
+      if (saveTimerRef.current) {
+        clearTimeout(saveTimerRef.current);
+        saveTimerRef.current = null;
+        void handleContentChange(latestContentRef.current);
       }
     },
     [handleContentChange]

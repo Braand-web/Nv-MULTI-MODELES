@@ -33,6 +33,8 @@ import {
   type NewUserSetting,
   type Suggestion,
   type NewAIUsage,
+  payment,
+  subscription,
   stream,
   suggestion,
   team,
@@ -784,6 +786,134 @@ export async function getModelPerformanceHints({
   }
 }
 
+type PaymentStatus = "pending" | "successful" | "failed" | "expired";
+
+export async function createPendingPayment({
+  amountXaf,
+  creditAmount,
+  externalId,
+  kind,
+  periodEndsAt,
+  plan,
+  productId,
+  providerTransactionId,
+  userId,
+}: {
+  amountXaf: number;
+  creditAmount: number;
+  externalId: string;
+  kind: "credits" | "plan";
+  periodEndsAt?: Date;
+  plan?: "free" | "pro" | "elite";
+  productId: string;
+  providerTransactionId: string;
+  userId: string;
+}) {
+  try {
+    const [created] = await db
+      .insert(payment)
+      .values({
+        amountXaf,
+        creditAmount,
+        externalId,
+        kind,
+        periodEndsAt,
+        plan,
+        productId,
+        providerTransactionId,
+        userId,
+      })
+      .returning();
+    return created;
+  } catch (error) {
+    throw new ChatbotError("bad_request:database", { cause: error });
+  }
+}
+
+export async function applyPaymentStatus({
+  providerTransactionId,
+  status,
+}: {
+  providerTransactionId: string;
+  status: PaymentStatus;
+}) {
+  try {
+    return await db.transaction(async (tx) => {
+      const [existing] = await tx
+        .select()
+        .from(payment)
+        .where(eq(payment.providerTransactionId, providerTransactionId));
+
+      if (!existing) {
+        return { applied: false, found: false, status: null };
+      }
+
+      if (existing.status === "successful") {
+        return { applied: false, found: true, status: existing.status };
+      }
+
+      if (status !== "successful") {
+        const [updated] = await tx
+          .update(payment)
+          .set({ status, updatedAt: new Date() })
+          .where(
+            and(
+              eq(payment.id, existing.id),
+              eq(payment.status, "pending")
+            )
+          )
+          .returning({ status: payment.status });
+        return { applied: false, found: true, status: updated?.status ?? existing.status };
+      }
+
+      const [claimed] = await tx
+        .update(payment)
+        .set({
+          completedAt: new Date(),
+          status: "successful",
+          updatedAt: new Date(),
+        })
+        .where(
+          and(eq(payment.id, existing.id), eq(payment.status, "pending"))
+        )
+        .returning();
+
+      if (!claimed) {
+        return { applied: false, found: true, status: existing.status };
+      }
+
+      const userValues = claimed.plan
+        ? {
+            credits: sql`${user.credits} + ${claimed.creditAmount}`,
+            plan: claimed.plan,
+            planExpiresAt: claimed.periodEndsAt ?? null,
+          }
+        : { credits: sql`${user.credits} + ${claimed.creditAmount}` };
+
+      await tx.update(user).set(userValues).where(eq(user.id, claimed.userId));
+
+      if (
+        claimed.kind === "plan" &&
+        claimed.plan &&
+        claimed.plan !== "free" &&
+        claimed.periodEndsAt
+      ) {
+        await tx.insert(subscription).values({
+          paymentId: claimed.id,
+          periodEndsAt: claimed.periodEndsAt,
+          periodStartsAt: claimed.createdAt,
+          plan: claimed.plan,
+          userId: claimed.userId,
+        });
+      }
+
+      return { applied: true, found: true, status: "successful" as const };
+    });
+  } catch (error) {
+    throw new ChatbotError("bad_request:database", { cause: error });
+  }
+}
+
 export type UsageSummary = {
   providerCostUsdMicros: number;
   requests: number;
@@ -971,6 +1101,8 @@ export async function deleteUserAccount(userId: string) {
       await tx.delete(aiUsage).where(eq(aiUsage.userId, userId));
       await tx.delete(teamMember).where(eq(teamMember.userId, userId));
       await tx.delete(apiKey).where(eq(apiKey.userId, userId));
+      await tx.delete(subscription).where(eq(subscription.userId, userId));
+      await tx.delete(payment).where(eq(payment.userId, userId));
       await tx.delete(userSetting).where(eq(userSetting.userId, userId));
       await tx.delete(user).where(eq(user.id, userId));
     });

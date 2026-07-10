@@ -34,7 +34,14 @@ export const entitlementsByPlan: Record<PlanId, PlanEntitlements> = {
   },
 };
 
-export function normalizePlan(plan: string | null | undefined): PlanId {
+export function normalizePlan(
+  plan: string | null | undefined,
+  expiresAt?: Date | null
+): PlanId {
+  if (expiresAt && expiresAt.getTime() <= Date.now()) {
+    return "free";
+  }
+
   if (plan === "pro" || plan === "elite") {
     return plan;
   }

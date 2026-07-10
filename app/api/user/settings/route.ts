@@ -5,6 +5,7 @@ import {
   getUserSettings,
   updateUserSettings,
 } from "@/lib/db/queries";
+import { normalizePlan } from "@/lib/ai/entitlements";
 import { NextResponse } from "next/server";
 
 const settingsSchema = z.object({
@@ -44,7 +45,8 @@ export async function GET() {
         credits: dbUser.credits,
         email: dbUser.email,
         name: dbUser.name,
-        plan: dbUser.plan,
+        plan: normalizePlan(dbUser.plan, dbUser.planExpiresAt),
+        planExpiresAt: dbUser.planExpiresAt,
       },
     });
   } catch (error) {

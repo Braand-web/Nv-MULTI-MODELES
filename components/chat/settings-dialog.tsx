@@ -29,6 +29,7 @@ import { useEffect, useMemo, useState } from "react";
 import useSWR from "swr";
 import { toast } from "sonner";
 import { getModelFallbacks, TENCENT_HY3_FREE_EXPIRES_AT } from "@/lib/ai/models";
+import { subscriptionPlans } from "@/lib/billing/catalog";
 import { cn, fetcher } from "@/lib/utils";
 import { Button } from "../ui/button";
 import {
@@ -70,7 +71,13 @@ type UserSettings = {
 
 type SettingsResponse = {
   settings: UserSettings;
-  user: { credits: number; email: string; name: string | null; plan: string };
+  user: {
+    credits: number;
+    email: string;
+    name: string | null;
+    plan: string;
+    planExpiresAt: string | null;
+  };
 };
 
 type UsageResponse = {
@@ -225,6 +232,7 @@ export function SettingsDialog({
   const [draft, setDraft] = useState<UserSettings>(initialSettings);
   const [isSaving, setIsSaving] = useState(false);
   const [showRecharge, setShowRecharge] = useState(false);
+  const [checkoutProductId, setCheckoutProductId] = useState<string | null>(null);
   const [apiKeyName, setApiKeyName] = useState("Production");
   const [createdSecret, setCreatedSecret] = useState<string | null>(null);
   const [teamName, setTeamName] = useState("");
@@ -347,6 +355,27 @@ export function SettingsDialog({
     await signOut({ redirectTo: "/" });
   };
 
+  const startCheckout = async (productId: string) => {
+    try {
+      setCheckoutProductId(productId);
+      const response = await fetch("/api/payment/recharge", {
+        body: JSON.stringify({ productId }),
+        headers: { "Content-Type": "application/json" },
+        method: "POST",
+      });
+      const payload = await response.json();
+      if (!response.ok || !payload.url) {
+        throw new Error(payload.error || "Checkout unavailable");
+      }
+      window.location.assign(payload.url);
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Paiement indisponible"
+      );
+      setCheckoutProductId(null);
+    }
+  };
+
   const renderPanel = () => {
     const user = settingsData?.user;
     const usage = usageData?.usage;
@@ -435,13 +464,23 @@ export function SettingsDialog({
         );
       case "billing":
         return (
-          <Panel description="Plan, crédits et recharge sécurisée." title="Facturation">
+          <Panel description="Plan, crédits et paiement Mobile Money sécurisé." title="Facturation">
             <div className="grid grid-cols-2 divide-x divide-border border border-border/70">
               <div className="p-4"><span className="text-xs text-muted-foreground">Plan actuel</span><strong className="mt-1 block text-lg capitalize">{user?.plan ?? "free"}</strong></div>
               <div className="p-4"><span className="text-xs text-muted-foreground">Crédits disponibles</span><strong className="mt-1 block text-lg">{formatNumber(user?.credits ?? 0)}</strong></div>
             </div>
+            {user?.planExpiresAt ? <p className="text-sm text-muted-foreground">Plan actif jusqu’au {formatDate(user.planExpiresAt)}.</p> : null}
+            <div className="grid gap-3 sm:grid-cols-2">
+              {subscriptionPlans.map((plan) => (
+                <div className="border border-border/70 p-4" key={plan.id}>
+                  <div className="flex items-start justify-between gap-3"><div><strong className="block text-base">{plan.label}</strong><span className="mt-1 block text-sm text-muted-foreground">{formatNumber(plan.credits)} crédits / 30 jours</span></div><strong className="text-sm">{formatNumber(plan.priceXaf)} FCFA</strong></div>
+                  <p className="mt-3 text-sm text-muted-foreground">Routage prioritaire, limites augmentées et toutes les capacités de l’agent.</p>
+                  <Button className="mt-4 w-full" disabled={checkoutProductId !== null} onClick={() => void startCheckout(plan.id)} variant={plan.recommended ? "default" : "outline"}>{checkoutProductId === plan.id ? "Ouverture du paiement..." : user?.plan === plan.plan ? "Prolonger" : `Passer ${plan.label}`}</Button>
+                </div>
+              ))}
+            </div>
             <Button onClick={() => setShowRecharge(true)}><CoinsIcon className="size-4" /> Recharger les crédits</Button>
-            <p className="text-sm text-muted-foreground">Les modèles premium consomment des crédits. Tencent Hy3 est temporairement gratuit jusqu’au 21 juillet.</p>
+            <p className="text-sm text-muted-foreground">Un plan est valable 30 jours et ne se renouvelle pas automatiquement. Les crédits achetés restent acquis. Tencent Hy3 est temporairement gratuit jusqu’au 21 juillet.</p>
           </Panel>
         );
       case "usage":

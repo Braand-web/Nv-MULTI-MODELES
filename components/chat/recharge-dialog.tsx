@@ -11,44 +11,27 @@ import {
 import { Button } from "@/components/ui/button";
 import { Coins, Loader2, Sparkles, ShieldCheck } from "lucide-react";
 import { toast } from "./toast";
+import { creditPacks } from "@/lib/billing/catalog";
 
 type RechargeDialogProps = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
 };
 
-const PACKS = [
-  {
-    credits: 500,
-    price: 500,
-    popular: false,
-    color: "from-amber-500/20 to-amber-700/20 border-amber-500/30",
-    textColor: "text-amber-500",
-  },
-  {
-    credits: 1000,
-    price: 1000,
-    popular: true,
-    color: "from-blue-500/20 to-indigo-600/20 border-blue-500/50",
-    textColor: "text-blue-500",
-  },
-  {
-    credits: 5000,
-    price: 5000,
-    popular: false,
-    color: "from-emerald-500/20 to-teal-700/20 border-emerald-500/30",
-    textColor: "text-emerald-500",
-  },
+const packStyles = [
+  "from-amber-500/20 to-amber-700/20 border-amber-500/30",
+  "from-blue-500/20 to-indigo-600/20 border-blue-500/50",
+  "from-emerald-500/20 to-teal-700/20 border-emerald-500/30",
 ];
 
 export function RechargeDialog({ open, onOpenChange }: RechargeDialogProps) {
-  const [loadingPack, setLoadingPack] = useState<number | null>(null);
+  const [loadingPack, setLoadingPack] = useState<string | null>(null);
 
-  const handleBuy = async (amount: number, index: number) => {
+  const handleBuy = async (productId: string) => {
     try {
-      setLoadingPack(index);
+      setLoadingPack(productId);
       const res = await fetch("/api/payment/recharge", {
-        body: JSON.stringify({ amount }),
+        body: JSON.stringify({ productId }),
         headers: { "Content-Type": "application/json" },
         method: "POST",
       });
@@ -92,12 +75,12 @@ export function RechargeDialog({ open, onOpenChange }: RechargeDialogProps) {
         </DialogHeader>
 
         <div className="grid gap-4 mt-6">
-          {PACKS.map((pack, idx) => (
+          {creditPacks.map((pack, idx) => (
             <div
-              className={`relative flex items-center justify-between p-4 rounded-xl border bg-gradient-to-r ${pack.color} transition-all duration-200 hover:scale-[1.01]`}
-              key={pack.credits}
+              className={`relative flex items-center justify-between p-4 rounded-xl border bg-gradient-to-r ${packStyles[idx]} transition-all duration-200 hover:scale-[1.01]`}
+              key={pack.id}
             >
-              {pack.popular && (
+              {pack.recommended && (
                 <span className="absolute -top-2.5 right-4 flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-blue-600 text-white shadow-lg">
                   <Sparkles className="size-3" /> Populaire
                 </span>
@@ -113,14 +96,14 @@ export function RechargeDialog({ open, onOpenChange }: RechargeDialogProps) {
               <Button
                 className="font-bold relative"
                 disabled={loadingPack !== null}
-                onClick={() => handleBuy(pack.price, idx)}
+                onClick={() => handleBuy(pack.id)}
                 size="sm"
-                variant={pack.popular ? "default" : "outline"}
+                variant={pack.recommended ? "default" : "outline"}
               >
-                {loadingPack === idx ? (
+                {loadingPack === pack.id ? (
                   <Loader2 className="size-4 animate-spin" />
                 ) : (
-                  `${pack.price} FCFA`
+                  `${pack.priceXaf} FCFA`
                 )}
               </Button>
             </div>
