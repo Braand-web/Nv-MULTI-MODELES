@@ -24,6 +24,7 @@ import { toast } from "./toast";
 import { Artifact } from "./artifact";
 import { ChatHeader } from "./chat-header";
 import { DataStreamHandler } from "./data-stream-handler";
+import { Greeting } from "./greeting";
 import { submitEditedMessage } from "./message-editor";
 import { Messages } from "./messages";
 import { MultimodalInput } from "./multimodal-input";
@@ -74,6 +75,8 @@ export function ChatShell() {
     null
   );
   const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const isIdleComposer =
+    !editingMessage && !isLoading && !isReadonly && messages.length === 0;
   const isArtifactVisible = useArtifactSelector((state) => state.isVisible);
   const { setArtifact } = useArtifact();
 
@@ -160,10 +163,19 @@ export function ChatShell() {
               selectedModelId={currentModelId}
               setMessages={setMessages}
               status={status}
+              showGreeting={!isIdleComposer}
               votes={votes}
             />
 
-            <div className="sticky bottom-0 z-1 mx-auto flex w-full max-w-4xl gap-2 border-t-0 bg-background px-2 pb-3 md:px-4 md:pb-4">
+            <div
+              className={cn(
+                "z-10 mx-auto flex w-full",
+                isIdleComposer
+                  ? "absolute inset-x-0 top-1/2 max-w-3xl -translate-y-1/2 flex-col gap-7 px-4"
+                  : "sticky bottom-0 max-w-4xl gap-2 bg-background px-2 pb-3 md:px-4 md:pb-4"
+              )}
+            >
+              {isIdleComposer ? <Greeting /> : null}
               {!isReadonly && (
                 <MultimodalInput
                   attachments={attachments}

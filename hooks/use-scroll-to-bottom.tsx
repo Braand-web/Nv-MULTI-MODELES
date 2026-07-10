@@ -6,6 +6,7 @@ export function useScrollToBottom() {
   const [isAtBottom, setIsAtBottom] = useState(true);
   const isAtBottomRef = useRef(true);
   const isUserScrollingRef = useRef(false);
+  const pendingScrollFrameRef = useRef<number | null>(null);
 
   useEffect(() => {
     isAtBottomRef.current = isAtBottom;
@@ -16,7 +17,7 @@ export function useScrollToBottom() {
       return true;
     }
     const { scrollTop, scrollHeight, clientHeight } = containerRef.current;
-    return scrollTop + clientHeight >= scrollHeight - 100;
+    return scrollTop + clientHeight >= scrollHeight - 72;
   }, []);
 
   const scrollToBottom = useCallback((behavior: ScrollBehavior = "smooth") => {
@@ -65,9 +66,14 @@ export function useScrollToBottom() {
 
     const scrollIfNeeded = () => {
       if (isAtBottomRef.current && !isUserScrollingRef.current) {
-        requestAnimationFrame(() => {
+        if (pendingScrollFrameRef.current !== null) {
+          return;
+        }
+
+        pendingScrollFrameRef.current = requestAnimationFrame(() => {
+          pendingScrollFrameRef.current = null;
           container.scrollTo({
-            behavior: "instant",
+            behavior: "auto",
             top: container.scrollHeight,
           });
           setIsAtBottom(true);
@@ -93,6 +99,9 @@ export function useScrollToBottom() {
     return () => {
       mutationObserver.disconnect();
       resizeObserver.disconnect();
+      if (pendingScrollFrameRef.current !== null) {
+        cancelAnimationFrame(pendingScrollFrameRef.current);
+      }
     };
   }, []);
 

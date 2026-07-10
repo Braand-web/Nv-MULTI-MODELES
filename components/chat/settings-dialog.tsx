@@ -47,8 +47,8 @@ type SettingsSection =
   | "billing"
   | "usage"
   | "capabilities"
-  | "claude-code"
-  | "claude-chrome"
+  | "development"
+  | "web"
   | "skills"
   | "connectors"
   | "plugins"
@@ -106,8 +106,8 @@ const navigation: NavigationItem[] = [
   { group: "Paramètres", icon: CircleDollarSignIcon, id: "billing", label: "Facturation" },
   { group: "Paramètres", icon: BarChart3Icon, id: "usage", label: "Utilisation" },
   { group: "Paramètres", icon: SparklesIcon, id: "capabilities", label: "Capacités" },
-  { group: "Paramètres", icon: Code2Icon, id: "claude-code", label: "Claude Code" },
-  { group: "Paramètres", icon: EyeIcon, id: "claude-chrome", label: "Claude dans Chrome" },
+  { group: "Paramètres", icon: Code2Icon, id: "development", label: "Développement" },
+  { group: "Paramètres", icon: EyeIcon, id: "web", label: "Navigation web" },
   { group: "Personnaliser", icon: BracesIcon, id: "skills", label: "Compétences" },
   { group: "Personnaliser", icon: LinkIcon, id: "connectors", label: "Connecteurs" },
   { group: "Personnaliser", icon: PlugZapIcon, id: "plugins", label: "Plugins" },
@@ -466,10 +466,10 @@ export function SettingsDialog({
             <div className="flex flex-wrap gap-2"><span className="border border-border px-2 py-1 text-xs">Recherche web</span><span className="border border-border px-2 py-1 text-xs">Documents</span><span className="border border-border px-2 py-1 text-xs">Images</span><span className="border border-border px-2 py-1 text-xs">Météo</span></div>
           </Panel>
         );
-      case "claude-code":
-        return <Panel description="Surface de travail orientée code, reliée aux outils de génération et d’édition de documents." title="Claude Code"><div className="border-y border-border/60 py-4"><span className="block text-sm font-medium">Mode code</span><p className="mt-1 text-sm text-muted-foreground">L’agent peut analyser, générer et réviser des projets dans les artefacts, avec la même règle de validation que les autres actions.</p></div><Button onClick={() => setActiveSection("capabilities")} variant="outline">Gérer les capacités</Button></Panel>;
-      case "claude-chrome":
-        return <Panel description="Navigation et vérification d’informations actuelles depuis une conversation." title="Claude dans Chrome"><div className="border-y border-border/60 py-4"><span className="block text-sm font-medium">Recherche web</span><p className="mt-1 text-sm text-muted-foreground">La recherche vérifiée est pilotée dans Confidentialité et n’est appelée que lorsque la demande le justifie.</p></div><Button onClick={() => setActiveSection("privacy")} variant="outline">Gérer la confidentialité</Button></Panel>;
+      case "development":
+        return <Panel description="Surface de travail orientée code, reliée aux outils de génération et d’édition de documents." title="Développement"><div className="border-y border-border/60 py-4"><span className="block text-sm font-medium">Mode code</span><p className="mt-1 text-sm text-muted-foreground">L’agent peut analyser, générer et réviser des projets dans les artefacts, avec la même règle de validation que les autres actions.</p></div><Button onClick={() => setActiveSection("capabilities")} variant="outline">Gérer les capacités</Button></Panel>;
+      case "web":
+        return <Panel description="Navigation et vérification d’informations actuelles depuis une conversation." title="Navigation web"><div className="border-y border-border/60 py-4"><span className="block text-sm font-medium">Recherche web</span><p className="mt-1 text-sm text-muted-foreground">La recherche vérifiée est pilotée dans Confidentialité et n’est appelée que lorsque la demande le justifie.</p></div><Button onClick={() => setActiveSection("privacy")} variant="outline">Gérer la confidentialité</Button></Panel>;
       case "skills":
         return <Panel description="Compétences de l’agent disponibles pour exécuter un travail concret." title="Compétences"><div className="divide-y divide-border/60 border-y border-border/60">{["Analyse de fichiers", "Création de documents", "Recherche web", "Génération d’images", "Raisonnement et code"].map((skill) => <div className="flex items-center justify-between py-4" key={skill}><span className="text-sm font-medium">{skill}</span><span className="text-xs text-muted-foreground">Disponible</span></div>)}</div></Panel>;
       case "connectors":

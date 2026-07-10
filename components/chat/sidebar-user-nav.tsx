@@ -131,13 +131,6 @@ export function SidebarUserNav({ user }: { user: User }) {
             )}
             <DropdownMenuItem
               className="cursor-pointer text-[13px]"
-              onSelect={() => setShowSettings(true)}
-            >
-              <Settings2 className="size-3.5" />
-              Paramètres
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              className="cursor-pointer text-[13px]"
               data-testid="user-nav-item-theme"
               onSelect={handleThemeSelect}
             >

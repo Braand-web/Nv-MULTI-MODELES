@@ -1,6 +1,6 @@
 "use client";
 import type { UseChatHelpers } from "@ai-sdk/react";
-import { useCallback } from "react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 import type { Vote } from "@/lib/db/schema";
 import type { ChatMessage } from "@/lib/types";
 import { cn, sanitizeText } from "@/lib/utils";
@@ -24,10 +24,19 @@ import { Weather } from "./weather";
 
 function WaitingText() {
   const { waitingStatus } = useDataStream();
-  const waitingText = waitingStatus?.message ?? "Waiting...";
+  const waitingTextByPhase = {
+    health: "Le modele repond plus lentement que prevu...",
+    thinking: "Redaction de la reponse...",
+    "still-waiting": "Toujours en cours...",
+    waiting: "Preparation de la reponse...",
+  } as const;
+  const waitingText =
+    (waitingStatus?.phase && waitingTextByPhase[waitingStatus.phase]) ??
+    waitingStatus?.message ??
+    "Preparation de la reponse...";
 
   return (
-    <div className="flex min-h-[calc(13px*1.65)] min-w-0 items-center text-[13px] leading-[1.65]">
+    <div className="flex min-h-[calc(15px*1.7)] min-w-0 items-center text-[15px] leading-[1.7]">
       <Shimmer
         as="span"
         className="font-medium whitespace-normal break-words"
@@ -38,6 +47,67 @@ function WaitingText() {
     </div>
   );
 }
+
+function useRafStreamText(value: string, isStreaming: boolean) {
+  const [renderedValue, setRenderedValue] = useState(value);
+  const valueRef = useRef(value);
+  const frameRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    valueRef.current = value;
+
+    if (!isStreaming) {
+      if (frameRef.current !== null) {
+        cancelAnimationFrame(frameRef.current);
+        frameRef.current = null;
+      }
+      setRenderedValue(value);
+      return;
+    }
+
+    if (frameRef.current === null) {
+      frameRef.current = requestAnimationFrame(() => {
+        frameRef.current = null;
+        setRenderedValue(valueRef.current);
+      });
+    }
+  }, [isStreaming, value]);
+
+  useEffect(
+    () => () => {
+      if (frameRef.current !== null) {
+        cancelAnimationFrame(frameRef.current);
+      }
+    },
+    []
+  );
+
+  return renderedValue;
+}
+
+const TextMessagePart = memo(function TextMessagePart({
+  isStreaming,
+  isUser,
+  text,
+}: {
+  isStreaming: boolean;
+  isUser: boolean;
+  text: string;
+}) {
+  const renderedText = useRafStreamText(text, isStreaming);
+
+  return (
+    <MessageContent
+      className={cn("text-[15px] leading-[1.7]", {
+        "w-fit max-w-[min(80%,56ch)] overflow-hidden break-words rounded-2xl rounded-br-lg border border-border/30 bg-gradient-to-br from-secondary to-muted px-3.5 py-2.5 shadow-[var(--shadow-card)]":
+          isUser,
+      })}
+      data-testid="message-content"
+    >
+      <MessageResponse>{sanitizeText(renderedText)}</MessageResponse>
+    </MessageContent>
+  );
+});
 
 function ToolApprovalActions({
   addToolApprovalResponse,
@@ -175,16 +245,12 @@ const PurePreviewMessage = ({
 
     if (type === "text") {
       return (
-        <MessageContent
-          className={cn("text-[13px] leading-[1.65]", {
-            "w-fit max-w-[min(80%,56ch)] overflow-hidden break-words rounded-2xl rounded-br-lg border border-border/30 bg-gradient-to-br from-secondary to-muted px-3.5 py-2 shadow-[var(--shadow-card)]":
-              message.role === "user",
-          })}
-          data-testid="message-content"
+        <TextMessagePart
+          isStreaming={isAssistant && isLoading}
+          isUser={isUser}
           key={key}
-        >
-          <MessageResponse>{sanitizeText(part.text)}</MessageResponse>
-        </MessageContent>
+          text={part.text}
+        />
       );
     }
 
@@ -416,7 +482,7 @@ const PurePreviewMessage = ({
         )}
       >
         {isAssistant && (
-          <div className="flex h-[calc(13px*1.65)] shrink-0 items-center">
+          <div className="flex h-[calc(15px*1.7)] shrink-0 items-center">
             <div className="flex size-7 items-center justify-center rounded-lg bg-muted/60 text-muted-foreground ring-1 ring-border/50">
               <OrigynIcon size={14} />
             </div>
@@ -432,7 +498,7 @@ const PurePreviewMessage = ({
   );
 };
 
-export const PreviewMessage = PurePreviewMessage;
+export const PreviewMessage = memo(PurePreviewMessage);
 
 export const ThinkingMessage = () => (
   <div
@@ -441,7 +507,7 @@ export const ThinkingMessage = () => (
     data-testid="message-assistant-loading"
   >
     <div className="flex items-start gap-3">
-      <div className="flex h-[calc(13px*1.65)] shrink-0 items-center">
+      <div className="flex h-[calc(15px*1.7)] shrink-0 items-center">
         <div className="flex size-7 items-center justify-center rounded-lg bg-muted/60 text-muted-foreground ring-1 ring-border/50">
           <OrigynIcon size={14} />
         </div>
